@@ -132,7 +132,7 @@ const KEY = "seventhday_cliente";
 async function openBooking(pre) {
   pre = (pre && typeof pre === "object" && !pre.type) ? pre : {};
   if (!CFG) return;
-  B = { step: 0, services: [], barberId: "any", date: null, slot: null, slotBarber: null, name: "", phone: "", sending: false };
+  B = { step: 0, services: [], barberId: "any", date: null, slot: null, slotBarber: null, name: "", phone: "", sending: false, busca: "" };
   try { const saved = JSON.parse(localStorage.getItem(KEY) || "null"); if (saved) { B.name = saved.name; B.phone = saved.phone; } } catch (e) {}
   if (pre.svc) { B.services = [pre.svc]; B.step = 1; }
   if (pre.barber) B.barberId = pre.barber;
@@ -154,8 +154,27 @@ function renderStep(dir) {
   const back = B.step > 0 && B.step < 4 ? `<button class="btn btn-ghost" id="bk">Voltar</button>` : `<span></span>`;
 
   if (B.step === 0) {
-    body.innerHTML = `<h4>O que você vai fazer?</h4><p class="hint">Pode escolher mais de um. O tempo é somado.</p>` +
-      [...new Set(SERV.map(s => s.categoria))].map(c => `<div class="optcat">${esc(c)}</div>` + SERV.filter(s => s.categoria === c).map(s => `<button class="opt ${B.services.includes(s.id) ? "sel" : ""}" data-s="${s.id}" aria-pressed="${B.services.includes(s.id)}"><span>${esc(s.nome)}<small>${fmtDur(s.duracao)}${s.obs ? " · " + esc(s.obs) : ""}</small></span><span class="p">${money(s.preco)}</span></button>`).join("")).join("");
+    const norm = v => String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    body.innerHTML = `<h4>O que você vai fazer?</h4><p class="hint">Pode escolher mais de um. O tempo é somado.</p>
+      <div class="svc-search" role="search"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 15.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><input id="svcQ" type="search" autocomplete="off" placeholder="Buscar serviço (ex.: barba, escova, progressiva)" aria-label="Buscar serviço" value="${esc(B.busca || "")}"><button type="button" class="svc-clear hidden" id="svcClr" aria-label="Limpar busca">×</button></div>
+      <div id="svcList">` +
+      [...new Set(SERV.map(s => s.categoria))].map(c => `<div class="optcat">${esc(c)}</div>` + SERV.filter(s => s.categoria === c).map(s => `<button class="opt ${B.services.includes(s.id) ? "sel" : ""}" data-s="${s.id}" data-q="${esc(norm(s.nome + " " + s.categoria + " " + (s.obs || "")))}" aria-pressed="${B.services.includes(s.id)}"><span>${esc(s.nome)}<small>${fmtDur(s.duracao)}${s.obs ? " · " + esc(s.obs) : ""}</small></span><span class="p">${money(s.preco)}</span></button>`).join("")).join("") +
+      `</div><div class="empty hidden" id="svcNone" role="status">Nenhum serviço encontrado. Fale com o salão pelo WhatsApp.</div>`;
+    const q = $("#svcQ"), clr = $("#svcClr");
+    const filtra = () => {
+      B.busca = q.value; const t = norm(q.value.trim()); let vis = 0, cat = null, catVis = 0;
+      const fecha = () => { if (cat) cat.classList.toggle("hidden", !catVis); };
+      [...$("#svcList").children].forEach(el => {
+        if (el.classList.contains("optcat")) { fecha(); cat = el; catVis = 0; return; }
+        const ok = !t || el.dataset.q.includes(t); el.classList.toggle("hidden", !ok); if (ok) { vis++; catVis++; }
+      });
+      fecha();
+      $("#svcNone").classList.toggle("hidden", vis > 0);
+      clr.classList.toggle("hidden", !q.value);
+    };
+    q.oninput = filtra;
+    clr.onclick = () => { q.value = ""; filtra(); q.focus(); };
+    filtra();
     body.querySelectorAll("[data-s]").forEach(b => b.onclick = () => { const id = b.dataset.s; B.services = B.services.includes(id) ? B.services.filter(x => x !== id) : [...B.services, id]; renderStep(); });
     foot.innerHTML = `<span style="align-self:center;font-weight:600">${B.services.length ? fmtDur(totDur()) + " · " + from(totPrice()) : "Nenhum serviço escolhido"}</span><button class="btn btn-dark" id="nx" ${B.services.length ? "" : "disabled"}>Continuar</button>`;
   }
@@ -167,12 +186,40 @@ function renderStep(dir) {
     foot.innerHTML = back + `<span></span>`;
   }
   if (B.step === 2) {
-    const days = []; for (let i = 0; i <= CFG.dias_abertos; i++) { const d = new Date(); d.setDate(d.getDate() + i); days.push(d); }
-    if (!B.date) { const first = days.find(d => getSlots(dkey(d)).length); B.date = first ? dkey(first) : dkey(days[0]); }
-    const slots = getSlots(B.date);
+    const MES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+    const tEnd = new Date(t0); tEnd.setDate(tEnd.getDate() + CFG.dias_abertos);
+    const todayK = dkey(t0), minK = todayK, maxK = dkey(tEnd);
+    const mkey = d => d.getFullYear() + "-" + pad(d.getMonth() + 1);
+    const minM = mkey(t0), maxM = mkey(tEnd);
+    const cnt = {}; const nOf = k => (k in cnt ? cnt[k] : (cnt[k] = k >= minK && k <= maxK ? getSlots(k).length : 0));
+    if (!B.date) {
+      let first = null; for (let i = 0; i <= CFG.dias_abertos; i++) { const d = new Date(t0); d.setDate(d.getDate() + i); if (nOf(dkey(d))) { first = dkey(d); break; } }
+      B.date = first || todayK; B.calMonth = B.date.slice(0, 7);
+    }
+    if (!B.calMonth || B.calMonth < minM || B.calMonth > maxM) B.calMonth = B.date.slice(0, 7);
+    const [cy, cm] = B.calMonth.split("-").map(Number);
+    const first = new Date(cy, cm - 1, 1), nDays = new Date(cy, cm, 0).getDate();
+    const prevOk = B.calMonth > minM, nextOk = B.calMonth < maxM;
+    const longDay = d => `${WDL[d.getDay()]}, ${d.getDate()} de ${MES[d.getMonth()]}`;
+    let cells = ""; for (let i = 0; i < first.getDay(); i++) cells += `<span class="cal-pad" aria-hidden="true"></span>`;
+    for (let dd = 1; dd <= nDays; dd++) {
+      const d = new Date(cy, cm - 1, dd), k = dkey(d), n = nOf(k), sel = k === B.date;
+      const lbl = `${longDay(d)}, ${n ? n + (n === 1 ? " horário livre" : " horários livres") : "sem horários"}`;
+      cells += `<button type="button" class="cal-d${sel ? " sel" : ""}${k === todayK ? " today" : ""}${n ? " has" : ""}" data-d="${k}" ${n ? "" : "disabled"} aria-pressed="${sel}" aria-label="${lbl}">${dd}</button>`;
+    }
+    const slots = getSlots(B.date), sd = fromKey(B.date);
     body.innerHTML = `<h4>Quando?</h4><p class="hint">${fmtDur(totDur())} reservados${B.barberId !== "any" ? " com " + esc(pro(B.barberId).nome) : ""}.</p>
-      <div class="days">${days.map(d => { const k = dkey(d), n = getSlots(k).length; return `<button class="day ${k === B.date ? "sel" : ""}" data-d="${k}" ${n ? "" : "disabled"} aria-label="${WDL[d.getDay()]} ${d.getDate()}${n ? "" : " sem horários"}"><small>${WD[d.getDay()]}</small><b>${pad(d.getDate())}</b><small>${n ? n + " livres" : "—"}</small></button>`; }).join("")}</div>
+      <div class="cal">
+        <div class="cal-head"><button type="button" class="cal-nav" id="calPrev" aria-label="Mês anterior" ${prevOk ? "" : "disabled"}>&#8249;</button><b aria-live="polite">${MES[cm - 1][0].toUpperCase() + MES[cm - 1].slice(1)} ${cy}</b><button type="button" class="cal-nav" id="calNext" aria-label="Próximo mês" ${nextOk ? "" : "disabled"}>&#8250;</button></div>
+        <div class="cal-wd" aria-hidden="true">${WD.map(w => `<span>${w}</span>`).join("")}</div>
+        <div class="cal-grid">${cells}</div>
+      </div>
+      <div class="cal-day">${esc(longDay(sd))}</div>
       ${slots.length ? `<div class="slots">${slots.map(([t, bid]) => `<button class="slot ${B.slot === t ? "sel" : ""}" data-t="${t}" data-bid="${bid}">${fmtMin(t)}</button>`).join("")}</div>` : `<div class="empty">Sem horários neste dia. Escolha outro dia ou chame no WhatsApp para um encaixe.</div>`}`;
+    const shiftM = s => { const d = new Date(cy, cm - 1 + s, 1); B.calMonth = mkey(d); renderStep(); };
+    $("#calPrev").onclick = () => prevOk && shiftM(-1);
+    $("#calNext").onclick = () => nextOk && shiftM(1);
     body.querySelectorAll("[data-d]").forEach(b => b.onclick = () => { B.date = b.dataset.d; B.slot = null; renderStep(); });
     body.querySelectorAll("[data-t]").forEach(b => b.onclick = () => { B.slot = +b.dataset.t; B.slotBarber = b.dataset.bid; renderStep(); });
     foot.innerHTML = back + `<button class="btn btn-dark" id="nx" ${B.slot !== null ? "" : "disabled"}>Continuar</button>`;
