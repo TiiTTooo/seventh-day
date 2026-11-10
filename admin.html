@@ -62,22 +62,24 @@
   <div class="wrap"><div class="notif hidden" id="notifBar"></div></div>
 
   <section class="wrap tab" id="tab-agenda">
-    <div class="atools">
-      <div class="datenav">
-        <button class="btn btn-ghost btn-sm" id="prevDay" aria-label="Dia anterior">‹</button>
-        <strong id="adminDate"></strong>
-        <button class="btn btn-ghost btn-sm" id="nextDay" aria-label="Próximo dia">›</button>
-        <button class="btn btn-ghost btn-sm" id="todayBtn">Hoje</button>
-        <input type="date" id="pickDate" aria-label="Escolher data">
-      </div>
-      <div class="row-btns">
-        <button class="btn btn-ghost btn-sm" id="addBlock">Bloquear horário</button>
-        <button class="btn btn-ghost btn-sm" id="addWalkin">Encaixe manual</button>
-        <button class="btn btn-dark btn-sm" id="copyDay">Copiar agenda do dia</button>
+    <div class="agwrap">
+      <aside class="mcal-box">
+        <div class="mcal" id="mcal"></div>
+        <div class="mstats" id="mstats"></div>
+      </aside>
+      <div class="agmain">
+        <div class="atools">
+          <div class="dayhead"><strong id="adminDate"></strong><button class="btn btn-ghost btn-sm" id="todayBtn">Hoje</button></div>
+          <div class="row-btns">
+            <button class="btn btn-ghost btn-sm" id="addBlock">Bloquear horário</button>
+            <button class="btn btn-ghost btn-sm" id="addWalkin">Encaixe manual</button>
+            <button class="btn btn-dark btn-sm" id="copyDay">Copiar agenda do dia</button>
+          </div>
+        </div>
+        <div class="stats" id="stats"></div>
+        <div class="cols" id="cols"></div>
       </div>
     </div>
-    <div class="stats" id="stats"></div>
-    <div class="cols" id="cols"></div>
   </section>
 
   <section class="wrap tab hidden" id="tab-clientes">

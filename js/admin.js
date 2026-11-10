@@ -116,14 +116,42 @@ function abrirAba(t) {
 let dia = dkey(new Date()), AG = [], BL = [], novos = new Set();
 const profs = () => EQUIPE.filter(p => p.ativo && p.atende && (DONO || p.id === EU.id));
 const shiftDay = n => { const d = fromKey(dia); d.setDate(d.getDate() + n); dia = dkey(d); renderAgenda(); };
-$("#prevDay").onclick = () => shiftDay(-1); $("#nextDay").onclick = () => shiftDay(1);
-$("#todayBtn").onclick = () => { dia = dkey(new Date()); renderAgenda(); };
-$("#pickDate").onchange = e => { if (e.target.value) { dia = e.target.value; renderAgenda(); } };
+$("#todayBtn").onclick = () => { dia = dkey(new Date()); calMes = null; renderAgenda(); };
+let calMes = null, MES = [];
+const MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+async function renderMes() {
+  const base = calMes ? fromKey(calMes + "-01") : fromKey(dia); base.setDate(1);
+  calMes = base.getFullYear() + "-" + pad(base.getMonth() + 1);
+  const fim = new Date(base.getFullYear(), base.getMonth() + 1, 0);
+  const { data } = await sb.from("agendamentos").select("data,status,total,profissional_id").gte("data", dkey(base)).lte("data", dkey(fim));
+  MES = data || [];
+  const porDia = {}; MES.filter(a => a.status !== "cancelado").forEach(a => porDia[a.data] = (porDia[a.data] || 0) + 1);
+  const hoje = dkey(new Date()), cells = [];
+  for (let i = 0; i < base.getDay(); i++) cells.push(`<span></span>`);
+  for (let d = 1; d <= fim.getDate(); d++) {
+    const k = calMes + "-" + pad(d), h = CFG.horarios[String(new Date(base.getFullYear(), base.getMonth(), d).getDay())], n = porDia[k] || 0;
+    cells.push(`<button class="mc ${k === dia ? "sel" : ""} ${k === hoje ? "hoje" : ""} ${Array.isArray(h) ? "" : "fech"}" data-k="${k}" aria-pressed="${k === dia}" aria-label="${d} de ${MESES[base.getMonth()]}, ${n} agendamento(s)"><b>${d}</b>${n ? `<i>${n}</i>` : ""}</button>`);
+  }
+  $("#mcal").innerHTML = `<div class="mch"><button class="btn btn-ghost btn-sm" id="mPrev" aria-label="Mês anterior">‹</button><strong>${MESES[base.getMonth()]} ${base.getFullYear()}</strong><button class="btn btn-ghost btn-sm" id="mNext" aria-label="Próximo mês">›</button></div>
+    <div class="mgrid">${["D", "S", "T", "Q", "Q", "S", "S"].map(x => `<small>${x}</small>`).join("")}${cells.join("")}</div>`;
+  $("#mPrev").onclick = () => { const d = fromKey(calMes + "-01"); d.setMonth(d.getMonth() - 1); calMes = d.getFullYear() + "-" + pad(d.getMonth() + 1); renderMes(); };
+  $("#mNext").onclick = () => { const d = fromKey(calMes + "-01"); d.setMonth(d.getMonth() + 1); calMes = d.getFullYear() + "-" + pad(d.getMonth() + 1); renderMes(); };
+  $("#mcal").querySelectorAll("[data-k]").forEach(b => b.onclick = () => { dia = b.dataset.k; renderAgenda(); });
+  const act = MES.filter(a => a.status !== "cancelado"), conc = MES.filter(a => a.status === "concluido");
+  $("#mstats").innerHTML = `<h4>Mês de ${MESES[base.getMonth()]}</h4>
+    <div class="ms"><span>Faturamento previsto</span><b>${money(act.reduce((s, a) => s + Number(a.total), 0))}</b></div>
+    <div class="ms"><span>Faturamento concluído</span><b>${money(conc.reduce((s, a) => s + Number(a.total), 0))}</b></div>
+    <div class="ms"><span>Agendamentos</span><b>${act.length}</b></div>
+    <div class="ms"><span>Atendidos</span><b>${conc.length}</b></div>
+    <div class="ms"><span>Faltas</span><b>${MES.filter(a => a.status === "faltou").length}</b></div>
+    ${DONO ? profs().map(p => `<div class="ms sub"><span>${esc(p.nome.split(" ")[0])} (concluído)</span><b>${money(conc.filter(a => a.profissional_id === p.id).reduce((s, a) => s + Number(a.total), 0))}</b></div>`).join("") : ""}`;
+}
 
 async function renderAgenda() {
   const d = fromKey(dia), h = CFG.horarios[String(d.getDay())];
   $("#adminDate").textContent = WDL[d.getDay()] + ", " + pad(d.getDate()) + "/" + pad(d.getMonth() + 1) + (Array.isArray(h) ? "" : " · fechado");
-  $("#pickDate").value = dia;
+  if (!calMes || !dia.startsWith(calMes)) calMes = dia.slice(0, 7);
+  renderMes();
   const [a, b] = await Promise.all([
     sb.from("agendamentos").select("*").eq("data", dia).order("inicio"),
     sb.from("bloqueios").select("*").eq("data", dia).order("inicio")
@@ -131,7 +159,7 @@ async function renderAgenda() {
   if (a.error) return fail(a.error, "Erro ao carregar a agenda.");
   AG = a.data || []; BL = b.data || [];
   const act = AG.filter(x => x.status !== "cancelado");
-  $("#stats").innerHTML = [["Agendamentos", act.length], ["Previsto", money(act.reduce((s, x) => s + Number(x.total), 0))], ["Concluído", money(AG.filter(x => x.status === "concluido").reduce((s, x) => s + Number(x.total), 0))], ["Faltas", AG.filter(x => x.status === "faltou").length]]
+  $("#stats").innerHTML = [["Agendamentos", act.length], ["Previsto no dia", money(act.reduce((s, x) => s + Number(x.total), 0))], ["Concluído no dia", money(AG.filter(x => x.status === "concluido").reduce((s, x) => s + Number(x.total), 0))], ["Faltas", AG.filter(x => x.status === "faltou").length]]
     .map(([l, v]) => `<div class="stat"><small>${l}</small><b>${v}</b></div>`).join("");
   $("#cols").innerHTML = profs().map(p => {
     const items = [...AG.filter(x => x.profissional_id === p.id).map(v => ({ k: "a", t: v.inicio, v })), ...BL.filter(x => x.profissional_id === p.id || x.profissional_id === null).map(v => ({ k: "b", t: v.inicio, v }))].sort((x, y) => x.t - y.t);
