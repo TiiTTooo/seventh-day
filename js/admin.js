@@ -22,6 +22,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal()
 const show = id => ["login", "noAccess", "app"].forEach(x => $("#" + x).classList.toggle("hidden", x !== id));
 const fail = (err, fallback) => toast((err && err.message) ? traduz(err.message) : fallback);
 function traduz(m) {
+  if (/convite_invalido|Database error saving new user/i.test(m)) return "Código de convite inválido ou vencido, ou o e-mail não é o mesmo cadastrado pelo dono. Peça um código novo.";
   if (/Invalid login credentials/i.test(m)) return "E-mail ou senha incorretos.";
   if (/Email not confirmed/i.test(m)) return "Confirme seu e-mail pelo link que enviamos antes de entrar.";
   if (/already registered/i.test(m)) return "Esse e-mail já tem acesso. Use Entrar ou Esqueci minha senha.";
@@ -37,7 +38,8 @@ document.querySelectorAll(".tabs-mini button").forEach(b => b.onclick = () => {
   modo = b.dataset.mode;
   document.querySelectorAll(".tabs-mini button").forEach(x => x.classList.toggle("on", x === b));
   $("#lBtn").textContent = modo === "entrar" ? "Entrar" : "Criar minha senha";
-  $("#loginHint").textContent = modo === "entrar" ? "Entre com o e-mail cadastrado pelo dono do salão." : "Use o e-mail que o dono cadastrou na equipe e escolha uma senha de pelo menos 8 caracteres. Vamos mandar um link de confirmação para esse e-mail.";
+  $("#loginHint").textContent = modo === "entrar" ? "Entre com o e-mail cadastrado pelo dono do salão." : "Use o e-mail que o dono cadastrou na equipe, o código de convite que ele te mandou e escolha uma senha de pelo menos 8 caracteres. Depois confirme pelo link que chega no e-mail.";
+  $("#codeBox").classList.toggle("hidden", modo === "entrar");
   $("#lPass").autocomplete = modo === "entrar" ? "current-password" : "new-password";
   $("#lErr").classList.add("hidden"); $("#lOk").classList.add("hidden");
 });
@@ -50,7 +52,9 @@ async function doLogin() {
     const { error } = await sb.auth.signInWithPassword({ email, password: pass });
     if (error) { err.textContent = traduz(error.message); err.classList.remove("hidden"); }
   } else {
-    const { data, error } = await sb.auth.signUp({ email, password: pass, options: { emailRedirectTo: location.origin + location.pathname } });
+    const convite = $("#lCode").value.trim().toUpperCase();
+    if (convite.length < 8) { err.textContent = "Digite o código de convite que o dono do salão te mandou."; err.classList.remove("hidden"); $("#lBtn").disabled = false; return; }
+    const { data, error } = await sb.auth.signUp({ email, password: pass, options: { emailRedirectTo: location.origin + location.pathname, data: { convite } } });
     if (error) { err.textContent = traduz(error.message); err.classList.remove("hidden"); }
     else if (!data.session) { ok.textContent = "Pronto. Abra o e-mail que enviamos, clique no link de confirmação e depois entre aqui."; ok.classList.remove("hidden"); }
   }
@@ -105,7 +109,7 @@ document.querySelectorAll(".atabs button").forEach(b => b.onclick = () => abrirA
 function abrirAba(t) {
   document.querySelectorAll(".atabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
   document.querySelectorAll(".tab").forEach(s => s.classList.toggle("hidden", s.id !== "tab-" + t));
-  ({ agenda: renderAgenda, servicos: renderServicos, equipe: renderEquipe, imagens: renderImagens, config: renderConfig })[t]();
+  ({ agenda: renderAgenda, clientes: renderClientes, servicos: renderServicos, equipe: renderEquipe, imagens: renderImagens, config: renderConfig })[t]();
 }
 
 /* ===================== agenda ===================== */
@@ -195,7 +199,7 @@ function formAgendamento(titulo, ag) {
       const itens = ids.map(id => SERV.find(s => s.id === id)).map(s => ({ id: s.id, nome: s.nome, preco: Number(s.preco), duracao: s.duracao }));
       const reg = { profissional_id: $("#wb").value, data: $("#wd").value, inicio: toMin($("#wt").value), duracao: itens.reduce((a, s) => a + s.duracao, 0), servicos: itens, total: itens.reduce((a, s) => a + s.preco, 0), cliente_nome: name, cliente_tel: tel || null };
       const { data: oc } = await sb.rpc("horarios_ocupados", { p_de: reg.data, p_ate: reg.data });
-      const choque = (oc || []).filter(o => (o.profissional_id === reg.profissional_id || o.profissional_id === null) && !(ag && o.inicio === ag.inicio && o.profissional_id === ag.profissional_id && reg.data === ag.data)).some(o => reg.inicio < o.fim && reg.inicio + reg.duracao > o.inicio);
+      const choque = (oc || []).filter(o => (o.profissional_id === reg.profissional_id || o.profissional_id === null) && !(ag && !ag._novo && o.inicio === ag.inicio && o.profissional_id === ag.profissional_id && reg.data === ag.data)).some(o => reg.inicio < o.fim && reg.inicio + reg.duracao > o.inicio);
       if (choque && !$("#werr").dataset.ok) { $("#werr").dataset.ok = "1"; return err("Esse horário bate com outro agendamento ou bloqueio. Clique em Salvar de novo para confirmar mesmo assim."); }
       res(reg);
     };
@@ -217,20 +221,114 @@ $("#copyDay").onclick = async () => {
   profs().forEach(p => { const l = AG.filter(x => x.profissional_id === p.id && x.status !== "cancelado"); txt += `\n${p.nome}:\n` + (l.length ? l.map(x => `${fmtMin(x.inicio)} ${x.cliente_nome}: ${(x.servicos || []).map(s => s.nome).join(" + ")}`).join("\n") : "livre") + "\n"; });
   try { await navigator.clipboard.writeText(txt); toast("Agenda copiada. Cole no WhatsApp da equipe."); } catch (e) { toast("Não foi possível copiar neste navegador."); }
 };
+let audioCtx = null;
+function bip() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    [0, .18].forEach(t => { const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.frequency.value = 880; o.connect(g); g.connect(audioCtx.destination);
+      g.gain.setValueAtTime(.0001, audioCtx.currentTime + t); g.gain.exponentialRampToValueAtTime(.3, audioCtx.currentTime + t + .02); g.gain.exponentialRampToValueAtTime(.0001, audioCtx.currentTime + t + .15);
+      o.start(audioCtx.currentTime + t); o.stop(audioCtx.currentTime + t + .16); });
+  } catch (e) {}
+}
+document.addEventListener("click", () => { try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch (e) {} }, { once: true });
+const fila = [];
+function popupNovo(a) {
+  fila.push(a); if (fila.length > 1 && !$("#modal").classList.contains("hidden")) return; mostrarFila();
+}
+function mostrarFila() {
+  const a = fila[0]; if (!a) return;
+  const d = fromKey(a.data), p = EQUIPE.find(x => x.id === a.profissional_id);
+  openModal(`<div class="novo-pop"><div class="sino" aria-hidden="true">🔔</div><h3>Novo agendamento</h3>
+    <p class="big">${esc(a.cliente_nome)}</p>
+    <p>${WDL[d.getDay()]}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)} às <b>${fmtMin(a.inicio)}</b>${p ? " com " + esc(p.nome) : ""}</p>
+    <p class="hint">${esc((a.servicos || []).map(s => s.nome).join(" + "))} · ${money(a.total)}</p>
+    ${fila.length > 1 ? `<p class="hint">+${fila.length - 1} outro(s) na fila</p>` : ""}
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px"><button class="btn btn-ghost" id="pOk">Ok</button><button class="btn btn-brass" id="pVer">Ver na agenda</button></div></div>`);
+  const fechar = () => { fila.shift(); closeModal(); if (fila.length) setTimeout(mostrarFila, 200); };
+  $("#pOk").onclick = fechar;
+  $("#pVer").onclick = () => { dia = a.data; fechar(); abrirAba("agenda"); };
+}
 function ouvirNovos() {
   sb.channel("agend").on("postgres_changes", { event: "INSERT", schema: "public", table: "agendamentos" }, p => {
     const a = p.new; if (!a) return;
     novos.add(a.id);
     const d = fromKey(a.data);
-    toast(`Novo agendamento: ${a.cliente_nome}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)} às ${fmtMin(a.inicio)}`);
-    try { if ("Notification" in window && Notification.permission === "granted") new Notification("Novo agendamento", { body: `${a.cliente_nome} · ${pad(d.getDate())}/${pad(d.getMonth() + 1)} às ${fmtMin(a.inicio)}` }); } catch (e) {}
-    if (a.data === dia && !$("#tab-agenda").classList.contains("hidden")) renderAgenda();
+    bip();
+    if (a.origem === "site") popupNovo(a); else toast(`Encaixe adicionado: ${a.cliente_nome}`);
+    try { if ("Notification" in window && Notification.permission === "granted" && document.hidden) new Notification("Novo agendamento · " + CFG.nome, { body: `${a.cliente_nome} · ${pad(d.getDate())}/${pad(d.getMonth() + 1)} às ${fmtMin(a.inicio)}`, icon: "fotos/logo.svg" }); } catch (e) {}
+    const t = document.title; document.title = "(Novo) " + t.replace(/^\(Novo\) /, ""); setTimeout(() => document.title = t.replace(/^\(Novo\) /, ""), 15000);
+    if (!$("#tab-agenda").classList.contains("hidden")) renderAgenda();
+    if (!$("#tab-clientes").classList.contains("hidden")) renderClientes();
   }).on("postgres_changes", { event: "UPDATE", schema: "public", table: "agendamentos" }, () => { if (!$("#tab-agenda").classList.contains("hidden")) renderAgenda(); }).subscribe();
-  if ("Notification" in window && Notification.permission === "default") {
-    const b = document.createElement("button"); b.className = "btn btn-ghost btn-sm"; b.textContent = "Avisar novos agendamentos";
-    b.onclick = async () => { await Notification.requestPermission(); b.remove(); };
-    $(".row-btns").prepend(b);
-  }
+  avisoPermissao();
+}
+function avisoPermissao() {
+  const box = $("#notifBar"); if (!box) return;
+  if (!("Notification" in window)) { box.classList.add("hidden"); return; }
+  if (Notification.permission === "granted") { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+  box.innerHTML = Notification.permission === "denied"
+    ? `Os avisos do navegador estão bloqueados. Com o painel aberto, novos agendamentos ainda aparecem na tela com som. Para receber também com a aba minimizada, libere as notificações deste site no cadeado ao lado do endereço.`
+    : `<span>Ative os avisos para saber de novos agendamentos mesmo com o painel minimizado.</span><button class="btn btn-brass btn-sm" id="notifOn">Ativar avisos</button>`;
+  const b = $("#notifOn"); if (b) b.onclick = async () => { await Notification.requestPermission(); avisoPermissao(); if (Notification.permission === "granted") toast("Avisos ativados neste aparelho."); };
+}
+
+/* ===================== clientes ===================== */
+let CLI = [];
+const chave = a => a.cliente_tel || "nome:" + a.cliente_nome.trim().toLowerCase();
+async function renderClientes() {
+  const { data, error } = await sb.from("agendamentos").select("id,data,inicio,duracao,status,total,servicos,cliente_nome,cliente_tel,profissional_id,lembrete_em,origem").order("data", { ascending: false }).order("inicio", { ascending: false }).limit(5000);
+  if (error) return fail(error, "Erro ao carregar clientes.");
+  const hoje = dkey(new Date()), amanha = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return dkey(d); })();
+  const mapa = new Map();
+  (data || []).forEach(a => {
+    const k = chave(a); let c = mapa.get(k);
+    if (!c) { c = { k, nome: a.cliente_nome, tel: a.cliente_tel, hist: [], visitas: 0, faltas: 0, gasto: 0, ultimo: null, proximo: null }; mapa.set(k, c); }
+    c.hist.push(a);
+    if (a.status === "concluido") { c.visitas++; c.gasto += Number(a.total); if (!c.ultimo) c.ultimo = a; }
+    if (a.status === "faltou") c.faltas++;
+    if (a.status === "confirmado" && a.data >= hoje && (!c.proximo || a.data < c.proximo.data || (a.data === c.proximo.data && a.inicio < c.proximo.inicio))) c.proximo = a;
+  });
+  CLI = [...mapa.values()].sort((x, y) => x.nome.localeCompare(y.nome, "pt-BR"));
+  // lembretes de amanhã
+  const lemb = (data || []).filter(a => a.data === amanha && a.status === "confirmado" && a.cliente_tel).sort((x, y) => x.inicio - y.inicio);
+  $("#lembretes").innerHTML = `<div class="card"><h3>Lembretes para amanhã</h3>${lemb.length ? lemb.map(a => {
+    const p = EQUIPE.find(x => x.id === a.profissional_id), d = fromKey(a.data);
+    const msg = `Olá ${a.cliente_nome.split(" ")[0]}! Passando para lembrar do seu horário na ${CFG.nome} amanhã, ${pad(d.getDate())}/${pad(d.getMonth() + 1)}, às ${fmtMin(a.inicio)}${p ? " com " + p.nome.split(" ")[0] : ""}. Se não puder vir, avise por aqui. Até lá!`;
+    return `<div class="lrow ${a.lembrete_em ? "ok" : ""}"><span><b>${fmtMin(a.inicio)}</b> ${esc(a.cliente_nome)}${p ? " · " + esc(p.nome.split(" ")[0]) : ""}</span>
+      ${a.lembrete_em ? `<span class="tag ok">Lembrete enviado</span>` : `<a class="btn btn-dark btn-sm" target="_blank" rel="noopener" data-lemb="${a.id}" href="${waLink("55" + a.cliente_tel, msg)}">Enviar lembrete no WhatsApp</a>`}</div>`;
+  }).join("") : `<p class="hint">Nenhum horário confirmado para amanhã.</p>`}</div>`;
+  $("#lembretes").querySelectorAll("[data-lemb]").forEach(b => b.addEventListener("click", async () => { await sb.from("agendamentos").update({ lembrete_em: new Date().toISOString() }).eq("id", b.dataset.lemb); setTimeout(renderClientes, 800); }));
+  filtrarClientes();
+}
+const norm = t => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+function filtrarClientes() {
+  const q = norm($("#cliBusca").value), qd = q.replace(/\D/g, "");
+  const lista = CLI.filter(c => !q || norm(c.nome).includes(q) || (qd && (c.tel || "").includes(qd)));
+  const fd = a => { const d = fromKey(a.data); return pad(d.getDate()) + "/" + pad(d.getMonth() + 1) + "/" + String(d.getFullYear()).slice(2); };
+  $("#cliCount").textContent = `${lista.length} cliente(s)`;
+  $("#cliList").innerHTML = lista.length ? `<div class="clihead"><span>Cliente</span><span>WhatsApp</span><span>Atendimentos</span><span>Último</span><span>Próximo</span><span>Total gasto</span></div>` + lista.map((c, i) => `
+    <button class="clirow" data-i="${CLI.indexOf(c)}"><span class="cn">${esc(c.nome)}${c.faltas ? ` <span class="tag">${c.faltas} falta(s)</span>` : ""}</span><span>${fmtTel(c.tel) || "—"}</span><span>${c.visitas}</span><span>${c.ultimo ? fd(c.ultimo) : "—"}</span><span>${c.proximo ? `<b>${fd(c.proximo)} ${fmtMin(c.proximo.inicio)}</b>` : "—"}</span><span>${money(c.gasto)}</span></button>`).join("")
+    : `<div class="empty">${CLI.length ? "Nenhum cliente encontrado." : "Os clientes aparecem aqui a partir do primeiro agendamento."}</div>`;
+  $("#cliList").querySelectorAll("[data-i]").forEach(b => b.onclick = () => fichaCliente(CLI[+b.dataset.i]));
+}
+$("#cliBusca").addEventListener("input", filtrarClientes);
+function fichaCliente(c) {
+  const st = { confirmado: "Confirmado", concluido: "Concluído", faltou: "Faltou", cancelado: "Cancelado" };
+  openModal(`<h3>${esc(c.nome)}</h3>
+    <p class="hint">${c.tel ? fmtTel(c.tel) + " · " : ""}${c.visitas} atendimento(s) · ${money(c.gasto)} gastos${c.faltas ? " · " + c.faltas + " falta(s)" : ""}</p>
+    <div class="hist">${c.hist.map(a => { const d = fromKey(a.data), p = EQUIPE.find(x => x.id === a.profissional_id); return `<div class="hrow2 st-${a.status}"><span>${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${fmtMin(a.inicio)}</span><span>${esc((a.servicos || []).map(s => s.nome).join(" + "))}${p ? " · " + esc(p.nome.split(" ")[0]) : ""}</span><span>${st[a.status]}</span></div>`; }).join("")}</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap">
+      ${c.tel ? `<a class="btn btn-ghost" target="_blank" rel="noopener" href="${waLink("55" + c.tel, `Olá ${c.nome.split(" ")[0]}! Aqui é da ${CFG.nome}.`)}">Mensagem no WhatsApp</a>` : ""}
+      ${(DONO || EU.atende) ? `<button class="btn btn-brass" id="cliAg">Marcar novo horário</button>` : ""}
+      <button class="btn btn-dark" id="cliF">Fechar</button></div>`);
+  $("#cliF").onclick = closeModal;
+  const ag = $("#cliAg"); if (ag) ag.onclick = async () => {
+    closeModal();
+    const reg = await formAgendamento("Novo horário para " + c.nome, { cliente_nome: c.nome, cliente_tel: c.tel, data: dkey(new Date()), inicio: 600, servicos: [], profissional_id: DONO ? null : EU.id, _novo: true });
+    const { error } = await sb.from("agendamentos").insert({ ...reg, origem: "balcao" });
+    if (error) return fail(error); closeModal(); toast("Horário marcado."); dia = reg.data; renderClientes();
+  };
 }
 
 /* ===================== serviços ===================== */
@@ -300,10 +398,21 @@ async function enviar(file, pasta) {
 async function apagarArquivo(path) { if (path) await sb.storage.from("imagens").remove([path]); }
 
 /* ===================== equipe ===================== */
+let CONV = {};
 async function renderEquipe() {
-  const { data } = await sb.from("equipe").select("*").order("ordem"); EQUIPE = data || [];
+  const [{ data }, cv] = await Promise.all([sb.from("equipe").select("*").order("ordem"), sb.from("convites").select("*")]);
+  EQUIPE = data || []; CONV = Object.fromEntries((cv.data || []).map(c => [c.equipe_id, c]));
+  const fmtExp = d => { const x = new Date(d); return pad(x.getDate()) + "/" + pad(x.getMonth() + 1) + " às " + pad(x.getHours()) + ":" + pad(x.getMinutes()); };
+  const conviteBox = p => {
+    if (!p.email || p.user_id) return "";
+    const c = CONV[p.id], valido = c && new Date(c.expira) > new Date();
+    return `<div class="convite">${valido ? `<div>Código de convite: <b class="cod">${esc(c.codigo)}</b></div><small>Vale até ${fmtExp(c.expira)}, só para ${esc(p.email)}</small>
+      <div class="cbtns"><button class="btn btn-dark btn-sm" data-copiar>Copiar convite</button><button class="linkbtn2" data-gerar>Gerar outro</button></div>`
+      : `<div>${c ? "O código venceu." : "Sem código de convite ainda."}</div><div class="cbtns"><button class="btn btn-brass btn-sm" data-gerar>Gerar código de convite</button></div>`}</div>`;
+  };
   $("#eqList").innerHTML = EQUIPE.map(p => `<div class="eqcard ${p.ativo ? "" : "off"}" data-id="${p.id}">
     <div class="eqtop">${avatar(p)}<div><b>${esc(p.nome)}</b><div style="margin-top:4px">${p.papel === "dono" ? '<span class="tag own">Dono</span>' : '<span class="tag">Profissional</span>'} ${p.user_id ? '<span class="tag ok">Acesso ativo</span>' : (p.email ? '<span class="tag">Aguardando 1º acesso</span>' : "")}</div></div></div>
+    ${conviteBox(p)}
     <label class="btn btn-ghost btn-sm upl" style="margin-top:6px">Trocar foto<input type="file" accept="image/*" data-foto hidden></label>
     <label>Nome</label><input data-f="nome" value="${esc(p.nome)}">
     <label>Descrição no site</label><input data-f="descricao" value="${esc(p.descricao || "")}">
@@ -328,6 +437,14 @@ async function renderEquipe() {
       const f = e.target.files[0]; if (!f) return;
       try { toast("Enviando foto…"); const { url } = await enviar(f, "equipe"); const { error } = await sb.from("equipe").update({ foto_url: url }).eq("id", id); if (error) throw error; toast("Foto atualizada."); await carregarBase(); renderEquipe(); } catch (err) { fail(err, "Erro ao enviar a foto."); }
     };
+    const gerar = card.querySelector("[data-gerar]");
+    if (gerar) gerar.onclick = async () => { const { error } = await sb.rpc("gerar_convite", { p_equipe: id }); if (error) return fail(error); toast("Código gerado. Mande para a pessoa."); renderEquipe(); };
+    const copiar = card.querySelector("[data-copiar]");
+    if (copiar) copiar.onclick = async () => {
+      const c = CONV[id], link = location.origin + location.pathname;
+      const txt = `Olá ${p.nome.split(" ")[0]}! Seu acesso ao painel da ${CFG.nome}:\n1. Abra ${link}\n2. Clique em "Primeiro acesso"\n3. E-mail: ${p.email}\n4. Código de convite: ${c.codigo}\n5. Crie sua senha e confirme pelo link que chega no seu e-mail.\nO código vale até ${fmtExp(c.expira)}.`;
+      try { await navigator.clipboard.writeText(txt); toast("Convite copiado. Cole no WhatsApp da pessoa."); } catch (e) { openModal(`<h3>Convite</h3><textarea style="width:100%;height:180px">${esc(txt)}</textarea><div style="text-align:right;margin-top:12px"><button class="btn btn-dark" id="mclose">Fechar</button></div>`); $("#mclose").onclick = closeModal; }
+    };
     const del = card.querySelector("[data-del]");
     if (del) del.onclick = () => confirmar(`Remover ${p.nome}?`, "Se essa pessoa tem agendamentos, ela será só desativada para manter o histórico.", "Remover", async () => {
       const { error } = await sb.from("equipe").delete().eq("id", id);
@@ -350,7 +467,7 @@ $("#eqNew").onclick = () => {
     const reg = { nome: $("#qn").value.trim(), descricao: $("#qd").value.trim() || null, email: $("#qe").value.trim().toLowerCase() || null, papel: $("#qp").value, atende: $("#qa").checked, ordem: EQUIPE.length };
     if (!reg.nome) return toast("Digite o nome.");
     const { error } = await sb.from("equipe").insert(reg); if (error) return fail(error);
-    closeModal(); toast("Pessoa adicionada. Se tiver e-mail, ela já pode fazer o primeiro acesso."); await carregarBase(); renderEquipe();
+    closeModal(); toast(reg.email ? "Pessoa adicionada. Agora gere o código de convite no cartão dela." : "Pessoa adicionada."); await carregarBase(); renderEquipe();
   };
 };
 

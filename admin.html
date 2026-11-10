@@ -31,6 +31,7 @@
     <p class="hint" id="loginHint">Entre com o e-mail cadastrado pelo dono do salão.</p>
     <label for="lEmail">E-mail</label><input id="lEmail" type="email" autocomplete="email">
     <label for="lPass">Senha</label><input id="lPass" type="password" autocomplete="current-password" minlength="8">
+    <div class="hidden" id="codeBox"><label for="lCode">Código de convite</label><input id="lCode" autocomplete="off" autocapitalize="characters" placeholder="Ex.: 7F3A-C91B" maxlength="9"></div>
     <div class="err hidden" id="lErr"></div>
     <div class="ok hidden" id="lOk"></div>
     <button class="btn btn-dark wide" id="lBtn">Entrar</button>
@@ -51,11 +52,14 @@
 <main class="hidden" id="app">
   <nav class="atabs wrap" id="tabs" role="tablist">
     <button data-tab="agenda" class="on">Agenda</button>
+    <button data-tab="clientes">Clientes</button>
     <button data-tab="servicos" class="own">Serviços e preços</button>
     <button data-tab="equipe" class="own">Equipe</button>
     <button data-tab="imagens" class="own">Imagens</button>
     <button data-tab="config" class="own">Horários e contato</button>
   </nav>
+
+  <div class="wrap"><div class="notif hidden" id="notifBar"></div></div>
 
   <section class="wrap tab" id="tab-agenda">
     <div class="atools">
@@ -76,6 +80,13 @@
     <div class="cols" id="cols"></div>
   </section>
 
+  <section class="wrap tab hidden" id="tab-clientes">
+    <div class="tabhead"><div><h2>Clientes</h2><p class="hint">Todo mundo que já agendou, pelo site ou por encaixe. Clique no cliente para ver o histórico e marcar um novo horário.</p></div></div>
+    <div id="lembretes"></div>
+    <div class="clitools"><input id="cliBusca" type="search" placeholder="Buscar por nome ou WhatsApp" aria-label="Buscar cliente"><span class="hint" id="cliCount"></span></div>
+    <div id="cliList"></div>
+  </section>
+
   <section class="wrap tab hidden" id="tab-servicos">
     <div class="tabhead"><div><h2>Serviços e preços</h2><p class="hint">Alterações aparecem no site na hora. Serviço desativado some do site, mas continua nos agendamentos antigos.</p></div>
       <button class="btn btn-brass" id="svcNew">Novo serviço</button></div>
@@ -83,7 +94,7 @@
   </section>
 
   <section class="wrap tab hidden" id="tab-equipe">
-    <div class="tabhead"><div><h2>Equipe</h2><p class="hint">Para alguém entrar no painel, cadastre o e-mail aqui. A pessoa entra em "Primeiro acesso" com esse e-mail e cria a própria senha.</p></div>
+    <div class="tabhead"><div><h2>Equipe</h2><p class="hint">Para alguém entrar no painel, cadastre o e-mail aqui. Depois gere o código de convite e mande para a pessoa: só com ele ela consegue criar a senha em "Primeiro acesso". O código vale 7 dias e só funciona com o e-mail cadastrado.</p></div>
       <button class="btn btn-brass" id="eqNew">Adicionar pessoa</button></div>
     <div class="eqgrid" id="eqList"></div>
   </section>

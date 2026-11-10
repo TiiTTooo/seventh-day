@@ -97,3 +97,29 @@ body.adm{background:#E7E6E3;min-height:100vh}
 .hrow input[type=checkbox]{width:auto}
 .three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
 .savebar{grid-column:1/-1;display:flex;justify-content:flex-end}
+.convite{background:#FFF7E0;border:1px solid #EBD38A;border-radius:6px;padding:10px 12px;margin:10px 0;font-size:14px}
+.convite .cod{font-family:var(--display);font-size:24px;letter-spacing:.08em;color:var(--ink)}
+.convite small{color:#6b5a1f}
+.cbtns{display:flex;gap:10px;align-items:center;margin-top:8px}
+/* avisos */
+.notif{display:flex;justify-content:space-between;align-items:center;gap:12px;background:#FFF7E0;border:1px solid #EBD38A;border-radius:6px;padding:10px 14px;margin-top:16px;font-size:14px}
+.novo-pop{text-align:center}
+.novo-pop .sino{font-size:40px;animation:pop .4s}
+.novo-pop .big{font-family:var(--display);font-size:34px;font-weight:700;margin:6px 0}
+.novo-pop .hint{color:#5b6a6d}
+/* clientes */
+#lembretes .card{margin-bottom:20px}
+.lrow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #eee;flex-wrap:wrap}
+.lrow.ok{opacity:.7}
+.clitools{display:flex;align-items:center;gap:14px;margin-bottom:12px}
+.clitools input{max-width:360px}
+.clihead,.clirow{display:grid;grid-template-columns:2fr 1.3fr .9fr .9fr 1.2fr 1fr;gap:10px;align-items:center;padding:10px 14px}
+.clihead{font-size:13px;font-weight:600;color:#5b6a6d}
+.clirow{width:100%;text-align:left;background:#fff;border:0;border-radius:6px;margin-bottom:6px;font-size:15px}
+.clirow:hover{box-shadow:0 0 0 2px var(--brass)}
+.clirow .cn{font-weight:600}
+@media(max-width:760px){.clihead{display:none}.clirow{grid-template-columns:1fr 1fr}.clirow .cn{grid-column:1/-1}}
+.hist{max-height:320px;overflow:auto;margin-top:12px;border-top:1px solid #eee}
+.hrow2{display:grid;grid-template-columns:auto 1fr auto;gap:10px;padding:8px 0;border-bottom:1px solid #eee;font-size:14px}
+.hrow2.st-cancelado{opacity:.5}.hrow2.st-faltou span:last-child{color:var(--warn);font-weight:600}.hrow2.st-concluido span:last-child{color:var(--ok)}
+.modal .box{max-height:90vh;overflow:auto}
