@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Painel · Seventh Day</title>
+<link rel="icon" href="fotos/logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@500;700;900&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/site.css">
+<link rel="stylesheet" href="css/admin.css">
+</head>
+<body class="adm">
+<header class="abar">
+  <div class="wrap">
+    <a class="abrand" href="index.html"><img src="fotos/logo.svg" alt="Seventh Day"><span>Painel</span></a>
+    <div class="auser hidden" id="userBox"><span id="userName"></span><button class="btn btn-ghost btn-sm" id="logout">Sair</button></div>
+  </div>
+</header>
+
+<!-- login -->
+<main class="wrap hidden" id="login">
+  <div class="gate">
+    <h3>Área da equipe</h3>
+    <div class="tabs-mini" role="tablist">
+      <button class="on" data-mode="entrar">Entrar</button>
+      <button data-mode="criar">Primeiro acesso</button>
+    </div>
+    <p class="hint" id="loginHint">Entre com o e-mail cadastrado pelo dono do salão.</p>
+    <label for="lEmail">E-mail</label><input id="lEmail" type="email" autocomplete="email">
+    <label for="lPass">Senha</label><input id="lPass" type="password" autocomplete="current-password" minlength="8">
+    <div class="err hidden" id="lErr"></div>
+    <div class="ok hidden" id="lOk"></div>
+    <button class="btn btn-dark wide" id="lBtn">Entrar</button>
+    <button class="linkbtn2" id="lForgot" style="margin-top:12px">Esqueci minha senha</button>
+  </div>
+</main>
+
+<!-- sem acesso -->
+<main class="wrap hidden" id="noAccess">
+  <div class="gate">
+    <h3>Sem acesso</h3>
+    <p>Este e-mail ainda não está na equipe do salão. Peça para o dono cadastrar seu e-mail em <b>Equipe</b> e entre de novo.</p>
+    <button class="btn btn-dark wide" id="noAccessOut">Sair</button>
+  </div>
+</main>
+
+<!-- painel -->
+<main class="hidden" id="app">
+  <nav class="atabs wrap" id="tabs" role="tablist">
+    <button data-tab="agenda" class="on">Agenda</button>
+    <button data-tab="servicos" class="own">Serviços e preços</button>
+    <button data-tab="equipe" class="own">Equipe</button>
+    <button data-tab="imagens" class="own">Imagens</button>
+    <button data-tab="config" class="own">Horários e contato</button>
+  </nav>
+
+  <section class="wrap tab" id="tab-agenda">
+    <div class="atools">
+      <div class="datenav">
+        <button class="btn btn-ghost btn-sm" id="prevDay" aria-label="Dia anterior">‹</button>
+        <strong id="adminDate"></strong>
+        <button class="btn btn-ghost btn-sm" id="nextDay" aria-label="Próximo dia">›</button>
+        <button class="btn btn-ghost btn-sm" id="todayBtn">Hoje</button>
+        <input type="date" id="pickDate" aria-label="Escolher data">
+      </div>
+      <div class="row-btns">
+        <button class="btn btn-ghost btn-sm" id="addBlock">Bloquear horário</button>
+        <button class="btn btn-ghost btn-sm" id="addWalkin">Encaixe manual</button>
+        <button class="btn btn-dark btn-sm" id="copyDay">Copiar agenda do dia</button>
+      </div>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="cols" id="cols"></div>
+  </section>
+
+  <section class="wrap tab hidden" id="tab-servicos">
+    <div class="tabhead"><div><h2>Serviços e preços</h2><p class="hint">Alterações aparecem no site na hora. Serviço desativado some do site, mas continua nos agendamentos antigos.</p></div>
+      <button class="btn btn-brass" id="svcNew">Novo serviço</button></div>
+    <div id="svcList"></div>
+  </section>
+
+  <section class="wrap tab hidden" id="tab-equipe">
+    <div class="tabhead"><div><h2>Equipe</h2><p class="hint">Para alguém entrar no painel, cadastre o e-mail aqui. A pessoa entra em "Primeiro acesso" com esse e-mail e cria a própria senha.</p></div>
+      <button class="btn btn-brass" id="eqNew">Adicionar pessoa</button></div>
+    <div class="eqgrid" id="eqList"></div>
+  </section>
+
+  <section class="wrap tab hidden" id="tab-imagens">
+    <div class="tabhead"><div><h2>Imagens</h2><p class="hint">Fotos de trabalhos aparecem na galeria e na faixa do topo do site. Use fotos sem rosto de cliente ou com autorização.</p></div>
+      <label class="btn btn-brass upl">Adicionar fotos<input type="file" id="galUpload" accept="image/jpeg,image/png,image/webp" multiple hidden></label></div>
+    <div class="progress hidden" id="galProg"></div>
+    <div class="galadm" id="galList"></div>
+    <h3 class="subh">Fachada</h3>
+    <div class="fachada-adm" id="fachadaBox"></div>
+  </section>
+
+  <section class="wrap tab hidden" id="tab-config">
+    <div class="tabhead"><div><h2>Horários e contato</h2><p class="hint">Os horários definem quando o site oferece vagas.</p></div></div>
+    <div class="cfg" id="cfgForm"></div>
+  </section>
+</main>
+
+<div class="modal hidden" id="modal"><div class="box" id="modalBox"></div></div>
+<div class="toast hidden" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/admin.js"></script>
+</body>
+</html>
