@@ -1,0 +1,12 @@
+-- Seventh Day: limite por IP no agendamento e contas de cliente (login Google)
+-- Conteúdo idêntico às migrações aplicadas em 11/11/2026: limite_por_ip e contas_de_cliente.
+-- Para recriar, rode as duas migrações pelo histórico do projeto (Database > Migrations)
+-- ou copie de lá. Resumo do que elas criam:
+--  * tabela tentativas + função checar_limite_ip (5 por 10 min, 20 por dia por IP)
+--  * criar_agendamento chamando checar_limite_ip
+--  * função cpf_valido, tabela clientes (RLS: o próprio cliente e a equipe)
+--  * agendamentos.cliente_id + gatilho vincular_cliente + política de leitura do cliente
+--  * funções cancelar_meu_agendamento (até 2h antes) e excluir_minha_conta (LGPD)
+--  * bucket privado "clientes" com pastas por usuário
+--  * validar_cadastro: equipe só com convite; clientes só via Google
+--  * ligar_conta_equipe: só liga à equipe com convite pendente
