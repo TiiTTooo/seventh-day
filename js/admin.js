@@ -72,7 +72,7 @@ $("#logout").onclick = () => sb.auth.signOut();
 $("#noAccessOut").onclick = () => sb.auth.signOut();
 
 /* ===================== sessão ===================== */
-let EU = null, DONO = false, EQUIPE = [], SERV = [], CFG = null;
+let EU = null, MASTER = false, DONO = false, EQUIPE = [], SERV = [], CFG = null;
 sb.auth.onAuthStateChange(async (ev, session) => {
   if (ev === "PASSWORD_RECOVERY") {
     openModal(`<h3>Nova senha</h3><label for="np">Nova senha (mínimo 8 caracteres)</label><input id="np" type="password" autocomplete="new-password"><div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="btn btn-dark" id="npok">Salvar senha</button></div>`);
@@ -85,7 +85,7 @@ let iniciado = false;
 async function iniciar(session) {
   const { data, error } = await sb.from("equipe").select("*").eq("user_id", session.user.id).eq("ativo", true).maybeSingle();
   if (error || !data) { show("noAccess"); return; }
-  EU = data; DONO = data.papel === "dono";
+  EU = data; MASTER = data.papel === "master"; DONO = MASTER || data.papel === "dono";
   $("#userName").textContent = data.nome.split(" ")[0]; $("#userBox").classList.remove("hidden");
   document.querySelectorAll(".atabs .own").forEach(b => b.classList.toggle("hidden", !DONO));
   ["addBlock", "addWalkin"].forEach(id => $("#" + id).classList.toggle("hidden", !DONO && !EU.atende));
@@ -432,6 +432,8 @@ async function enviar(file, pasta) {
 async function apagarArquivo(path) { if (path) await sb.storage.from("imagens").remove([path]); }
 
 /* ===================== equipe ===================== */
+const papelOpts = atual => [["profissional", "Profissional: vê só a própria agenda"], ["dono", "Dono: vê e mexe em tudo"], ...(MASTER || atual === "master" ? [["master", "Master: administração do sistema"]] : [])]
+  .map(([v, l]) => `<option value="${v}" ${atual === v ? "selected" : ""}>${l}</option>`).join("");
 let CONV = {};
 async function renderEquipe() {
   const [{ data }, cv] = await Promise.all([sb.from("equipe").select("*").order("ordem"), sb.from("convites").select("*")]);
@@ -445,19 +447,20 @@ async function renderEquipe() {
       : `<div>${c ? "O código venceu." : "Sem código de convite ainda."}</div><div class="cbtns"><button class="btn btn-brass btn-sm" data-gerar>Gerar código de convite</button></div>`}</div>`;
   };
   $("#eqList").innerHTML = EQUIPE.map(p => `<div class="eqcard ${p.ativo ? "" : "off"}" data-id="${p.id}">
-    <div class="eqtop">${avatar(p)}<div><b>${esc(p.nome)}</b><div style="margin-top:4px">${p.papel === "dono" ? '<span class="tag own">Dono</span>' : '<span class="tag">Profissional</span>'} ${p.user_id ? '<span class="tag ok">Acesso ativo</span>' : (p.email ? '<span class="tag">Aguardando 1º acesso</span>' : "")}</div></div></div>
+    <div class="eqtop">${avatar(p)}<div><b>${esc(p.nome)}</b><div style="margin-top:4px">${p.papel === "master" ? '<span class="tag master">Master</span>' : p.papel === "dono" ? '<span class="tag own">Dono</span>' : '<span class="tag">Profissional</span>'} ${p.user_id ? '<span class="tag ok">Acesso ativo</span>' : (p.email ? '<span class="tag">Aguardando 1º acesso</span>' : "")}</div></div></div>
     ${conviteBox(p)}
     <label class="btn btn-ghost btn-sm upl" style="margin-top:6px">Trocar foto<input type="file" accept="image/*" data-foto hidden></label>
     <label>Nome</label><input data-f="nome" value="${esc(p.nome)}">
     <label>Descrição no site</label><input data-f="descricao" value="${esc(p.descricao || "")}">
     <label>E-mail de acesso ao painel</label><input data-f="email" type="email" value="${esc(p.email || "")}" placeholder="sem acesso ao painel">
-    <label>Tipo de acesso</label><select data-f="papel" ${p.id === EU.id ? "disabled" : ""}><option value="profissional" ${p.papel === "profissional" ? "selected" : ""}>Profissional: vê só a própria agenda</option><option value="dono" ${p.papel === "dono" ? "selected" : ""}>Dono: vê e mexe em tudo</option></select>
+    <label>Tipo de acesso</label><select data-f="papel" ${p.id === EU.id || (p.papel === "master" && !MASTER) ? "disabled" : ""}>${papelOpts(p.papel)}</select>
     <label class="sw" style="margin-top:12px"><input type="checkbox" data-f="atende" ${p.atende ? "checked" : ""}> Atende clientes (aparece no site e na agenda)</label>
     <label class="sw"><input type="checkbox" data-f="ativo" ${p.ativo ? "checked" : ""} ${p.id === EU.id ? "disabled" : ""}> Ativo na equipe</label>
-    <div class="acts"><button class="btn btn-dark btn-sm" data-save>Salvar</button>${p.id !== EU.id ? `<button class="linkbtn" data-del>Remover</button>` : ""}</div>
+    ${p.papel === "master" && !MASTER ? `<p class="hint" style="font-size:13px;color:#5b6a6d;margin-top:12px">Acesso Master: só o próprio Master altera.</p>` : `<div class="acts"><button class="btn btn-dark btn-sm" data-save>Salvar</button>${p.id !== EU.id ? `<button class="linkbtn" data-del>Remover</button>` : ""}</div>`}
   </div>`).join("");
   $("#eqList").querySelectorAll(".eqcard").forEach(card => {
     const id = card.dataset.id, p = EQUIPE.find(x => x.id === id), v = f => card.querySelector(`[data-f=${f}]`);
+    if (!card.querySelector("[data-save]")) return;
     card.querySelector("[data-save]").onclick = async () => {
       const email = v("email").value.trim().toLowerCase() || null;
       const upd = { nome: v("nome").value.trim(), descricao: v("descricao").value.trim() || null, email, atende: v("atende").checked };
@@ -493,7 +496,7 @@ $("#eqNew").onclick = () => {
     <label for="qn">Nome</label><input id="qn" maxlength="80">
     <label for="qd">Descrição no site</label><input id="qd" maxlength="80" placeholder="Ex.: Barbeiro, especialista em degradê">
     <label for="qe">E-mail de acesso ao painel (opcional)</label><input id="qe" type="email">
-    <label for="qp">Tipo de acesso</label><select id="qp"><option value="profissional">Profissional: vê só a própria agenda</option><option value="dono">Dono: vê e mexe em tudo</option></select>
+    <label for="qp">Tipo de acesso</label><select id="qp">${papelOpts("profissional")}</select>
     <label class="sw" style="margin-top:12px"><input type="checkbox" id="qa" checked> Atende clientes</label>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px"><button class="btn btn-ghost" id="qc">Cancelar</button><button class="btn btn-brass" id="qok">Adicionar</button></div>`);
   $("#qc").onclick = closeModal;
