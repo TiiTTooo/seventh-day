@@ -49,6 +49,14 @@ async function urlFoto(path) {
 async function iniciar() {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) { ver("vEntrar"); return; }
+  if (session.user.app_metadata?.provider !== "google") {
+    // sessão do painel da equipe (e-mail e senha): a área do cliente é só para contas Google
+    ver("vEntrar");
+    $("#google").insertAdjacentHTML("beforebegin", `<p class="hint" style="margin-bottom:12px">Você está conectado ao painel da equipe neste navegador. A área do cliente usa outra conta: <a href="admin.html">voltar ao painel</a> ou saia e entre com Google.</p>`);
+    $("#google").onclick = async () => { await sb.auth.signOut(); $("#google").onclick = null; location.reload(); };
+    $("#google").lastChild.textContent = "Sair do painel e entrar com Google";
+    return;
+  }
   USER = session.user; $("#sair").classList.remove("hidden");
   const { data } = await sb.from("clientes").select("*").eq("user_id", USER.id).maybeSingle();
   CLI = data;
