@@ -17,7 +17,7 @@ const ver = id => ["carregando", "vEntrar", "vCadastro", "vArea"].forEach(x => $
 
 /* avatares originais: cor + iniciais */
 const AVS = { a1: ["#D3302F", "#fff"], a2: ["#1A1516", "#E0353A"], a3: ["#2F7D5B", "#fff"], a4: ["#C9A45C", "#1A1516"], a5: ["#3A5BA0", "#fff"], a6: ["#7A3B26", "#F2EFEA"] };
-const iniciais = (n, s) => ((n || "?")[0] + (s || "")[0] || "").toUpperCase();
+const iniciais = (n, s) => (((n || "").trim()[0] || "?") + ((s || "").trim()[0] || "")).toUpperCase();
 function avatarSvg(av, n, s) {
   const [bg, fg] = AVS[av] || AVS.a1;
   return `<svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="50" fill="${bg}"/><text x="50" y="50" dy=".35em" text-anchor="middle" font-family="Big Shoulders Display, Impact, sans-serif" font-weight="700" font-size="42" fill="${fg}">${esc(iniciais(n, s))}</text></svg>`;
