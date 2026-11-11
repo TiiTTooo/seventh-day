@@ -28,8 +28,8 @@
       <button class="on" data-mode="entrar">Entrar</button>
       <button data-mode="criar">Primeiro acesso</button>
     </div>
-    <p class="hint" id="loginHint">Entre com o e-mail cadastrado pelo dono do salão.</p>
-    <label for="lEmail">E-mail</label><input id="lEmail" type="email" autocomplete="email">
+    <p class="hint" id="loginHint">Entre com seu e-mail ou usuário cadastrado pelo dono do salão.</p>
+    <label for="lEmail" id="lEmailLbl">E-mail ou usuário</label><input id="lEmail" type="text" autocomplete="username" autocapitalize="none" spellcheck="false">
     <label for="lPass">Senha</label><input id="lPass" type="password" autocomplete="current-password" minlength="8">
     <div class="hidden" id="codeBox"><label for="lCode">Código de convite</label><input id="lCode" autocomplete="off" autocapitalize="characters" placeholder="Ex.: 7F3A-C91B" maxlength="9"></div>
     <div class="err hidden" id="lErr"></div>

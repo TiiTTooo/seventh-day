@@ -23,12 +23,13 @@ const show = id => ["login", "noAccess", "app"].forEach(x => $("#" + x).classLis
 const fail = (err, fallback) => toast((err && err.message) ? traduz(err.message) : fallback);
 function traduz(m) {
   if (/convite_invalido|Database error saving new user/i.test(m)) return "Código de convite inválido ou vencido, ou o e-mail não é o mesmo cadastrado pelo dono. Peça um código novo.";
-  if (/Invalid login credentials/i.test(m)) return "E-mail ou senha incorretos.";
+  if (/Invalid login credentials/i.test(m)) return "Usuário ou senha incorretos.";
   if (/Email not confirmed/i.test(m)) return "Confirme seu e-mail pelo link que enviamos antes de entrar.";
   if (/already registered/i.test(m)) return "Esse e-mail já tem acesso. Use Entrar ou Esqueci minha senha.";
   if (/Password should be/i.test(m)) return "A senha precisa ter pelo menos 8 caracteres.";
   if (/violates foreign key/i.test(m)) return "Não dá para apagar: existe agendamento ligado a isso. Desative em vez de apagar.";
   if (/row-level security/i.test(m)) return "Você não tem permissão para isso.";
+  if (/equipe_usuario_key/i.test(m)) return "Esse usuário já está em uso. Escolha outro.";
   return m;
 }
 
@@ -38,20 +39,30 @@ document.querySelectorAll(".tabs-mini button").forEach(b => b.onclick = () => {
   modo = b.dataset.mode;
   document.querySelectorAll(".tabs-mini button").forEach(x => x.classList.toggle("on", x === b));
   $("#lBtn").textContent = modo === "entrar" ? "Entrar" : "Criar minha senha";
-  $("#loginHint").textContent = modo === "entrar" ? "Entre com o e-mail cadastrado pelo dono do salão." : "Use o e-mail que o dono cadastrou na equipe, o código de convite que ele te mandou e escolha uma senha de pelo menos 8 caracteres. Depois confirme pelo link que chega no e-mail.";
+  $("#lEmailLbl").textContent = modo === "entrar" ? "E-mail ou usuário" : "E-mail cadastrado pelo dono";
+  $("#loginHint").textContent = modo === "entrar" ? "Entre com seu e-mail ou usuário cadastrado pelo dono do salão." : "Use o e-mail que o dono cadastrou na equipe, o código de convite que ele te mandou e escolha uma senha de pelo menos 8 caracteres. Depois confirme pelo link que chega no e-mail.";
   $("#codeBox").classList.toggle("hidden", modo === "entrar");
   $("#lPass").autocomplete = modo === "entrar" ? "current-password" : "new-password";
   $("#lErr").classList.add("hidden"); $("#lOk").classList.add("hidden");
 });
+async function resolverEmail(v) {
+  if (v.includes("@")) return v;
+  const { data, error } = await sb.rpc("email_do_usuario", { p_usuario: v });
+  if (error) throw error;
+  return data || null;
+}
 async function doLogin() {
-  const email = $("#lEmail").value.trim().toLowerCase(), pass = $("#lPass").value;
+  let email = $("#lEmail").value.trim().toLowerCase(); const pass = $("#lPass").value;
   const err = $("#lErr"), ok = $("#lOk"); err.classList.add("hidden"); ok.classList.add("hidden");
   if (!email || pass.length < 8) { err.textContent = "Digite o e-mail e uma senha com pelo menos 8 caracteres."; err.classList.remove("hidden"); return; }
   $("#lBtn").disabled = true;
   if (modo === "entrar") {
+    try { email = await resolverEmail(email); } catch (e) { err.textContent = traduz(e.message); err.classList.remove("hidden"); $("#lBtn").disabled = false; return; }
+    if (!email) { err.textContent = "Usuário ou senha incorretos."; err.classList.remove("hidden"); $("#lBtn").disabled = false; return; }
     const { error } = await sb.auth.signInWithPassword({ email, password: pass });
     if (error) { err.textContent = traduz(error.message); err.classList.remove("hidden"); }
   } else {
+    if (!email.includes("@")) { err.textContent = "No primeiro acesso use o e-mail cadastrado pelo dono, não o usuário."; err.classList.remove("hidden"); $("#lBtn").disabled = false; return; }
     const convite = $("#lCode").value.trim().toUpperCase();
     if (convite.length < 8) { err.textContent = "Digite o código de convite que o dono do salão te mandou."; err.classList.remove("hidden"); $("#lBtn").disabled = false; return; }
     const { data, error } = await sb.auth.signUp({ email, password: pass, options: { emailRedirectTo: location.origin + location.pathname, data: { convite } } });
@@ -63,7 +74,8 @@ async function doLogin() {
 $("#lBtn").onclick = doLogin;
 $("#lPass").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
 $("#lForgot").onclick = async () => {
-  const email = $("#lEmail").value.trim().toLowerCase();
+  let email = $("#lEmail").value.trim().toLowerCase();
+  if (email && !email.includes("@")) { try { email = await resolverEmail(email); } catch (e) { return fail(e); } if (!email) { $("#lOk").textContent = "Se o usuário existir, o link vai para o e-mail cadastrado."; $("#lOk").classList.remove("hidden"); return; } }
   if (!email) { $("#lErr").textContent = "Digite seu e-mail acima e clique de novo em Esqueci minha senha."; $("#lErr").classList.remove("hidden"); return; }
   const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
   if (error) fail(error); else { $("#lOk").textContent = "Se o e-mail estiver cadastrado, você vai receber um link para criar uma nova senha."; $("#lOk").classList.remove("hidden"); }
@@ -453,6 +465,7 @@ async function renderEquipe() {
     <label>Nome</label><input data-f="nome" value="${esc(p.nome)}">
     <label>Descrição no site</label><input data-f="descricao" value="${esc(p.descricao || "")}">
     <label>E-mail de acesso ao painel</label><input data-f="email" type="email" value="${esc(p.email || "")}" placeholder="sem acesso ao painel">
+    <label>Usuário para entrar (opcional)</label><input data-f="usuario" value="${esc(p.usuario || "")}" placeholder="ex.: roque" autocapitalize="none" spellcheck="false" maxlength="30">
     <label>Tipo de acesso</label><select data-f="papel" ${p.id === EU.id || (p.papel === "master" && !MASTER) ? "disabled" : ""}>${papelOpts(p.papel)}</select>
     <label class="sw" style="margin-top:12px"><input type="checkbox" data-f="atende" ${p.atende ? "checked" : ""}> Atende clientes (aparece no site e na agenda)</label>
     <label class="sw"><input type="checkbox" data-f="ativo" ${p.ativo ? "checked" : ""} ${p.id === EU.id ? "disabled" : ""}> Ativo na equipe</label>
@@ -463,7 +476,9 @@ async function renderEquipe() {
     if (!card.querySelector("[data-save]")) return;
     card.querySelector("[data-save]").onclick = async () => {
       const email = v("email").value.trim().toLowerCase() || null;
-      const upd = { nome: v("nome").value.trim(), descricao: v("descricao").value.trim() || null, email, atende: v("atende").checked };
+      const usuario = v("usuario").value.trim().toLowerCase() || null;
+      if (usuario && !/^[a-z0-9._]{3,30}$/.test(usuario)) return toast("Usuário: 3 a 30 caracteres, só letras minúsculas sem acento, números, ponto e sublinhado.");
+      const upd = { nome: v("nome").value.trim(), descricao: v("descricao").value.trim() || null, email, usuario, atende: v("atende").checked };
       if (id !== EU.id) { upd.papel = v("papel").value; upd.ativo = v("ativo").checked; }
       if (email !== (p.email || null) && p.user_id) upd.user_id = null; // e-mail trocado: acesso precisa ser refeito
       if (!upd.nome) return toast("Digite o nome.");
