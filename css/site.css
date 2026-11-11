@@ -311,3 +311,6 @@ input,select,textarea{width:100%;font:inherit;padding:12px 14px;border:1.5px sol
 .loading{color:#5b6a6d;padding:20px 0}
 .err-box{background:#fde8e8;border:1px solid #f0b4b4;color:#7a1f1f;padding:14px;border-radius:6px}
 .slots-loading{color:#5b6a6d;padding:16px 0}
+.equipe-mini{font-size:13px;opacity:.6;text-decoration:none}
+@media(max-width:760px){.equipe-mini{display:none}}
+.cta-conta{margin-top:22px;background:#fff;border:1px dashed #c9c6bf;border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:6px;align-items:center;font-size:15px}

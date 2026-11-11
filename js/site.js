@@ -11,6 +11,17 @@ const FAQ = [
   ["Atendem mulheres e crianças?", "Sim. Temos serviços masculinos e femininos, e cortamos o cabelo das crianças também."]
 ];
 
+/* cliente logado (conta Google) */
+let CLIENTE = null;
+async function carregarCliente() {
+  try {
+    const { data: { session } } = await sb.auth.getSession(); if (!session) return;
+    const { data } = await sb.from("clientes").select("nome,sobrenome,whatsapp,avatar,foto_path").eq("user_id", session.user.id).maybeSingle();
+    if (!data) return; CLIENTE = data;
+    const a = document.getElementById("contaLink"); if (a) a.textContent = "Olá, " + data.nome;
+  } catch (e) {}
+}
+
 /* estado carregado do banco */
 let CFG = null, SERV = [], EQUIPE = [], GAL = [], FACHADA = null, OCUP = [];
 
@@ -134,6 +145,7 @@ async function openBooking(pre) {
   if (!CFG) return;
   B = { step: 0, services: [], barberId: "any", date: null, slot: null, slotBarber: null, name: "", phone: "", sending: false, busca: "" };
   try { const saved = JSON.parse(localStorage.getItem(KEY) || "null"); if (saved) { B.name = saved.name; B.phone = saved.phone; } } catch (e) {}
+  if (CLIENTE) { B.name = CLIENTE.nome + " " + CLIENTE.sobrenome; B.phone = CLIENTE.whatsapp; }
   if (pre.svc) { B.services = [pre.svc]; B.step = 1; }
   if (pre.barber) B.barberId = pre.barber;
   $("#bookOverlay").classList.remove("hidden"); document.body.style.overflow = "hidden";
@@ -245,7 +257,8 @@ function renderStep(dir) {
       <p style="margin-top:12px;font-size:19px">${WDL[d.getDay()]}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)} às <b>${fmtMin(B.slot)}</b> com ${esc(br.nome)}</p>
       <p class="hint" style="margin-top:8px">${esc(B.services.map(id => svc(id).nome).join(" + "))} · ${from(totPrice())}</p>
       <p style="margin-top:24px"><a class="btn btn-brass" href="${waLink(CFG.whatsapp, msg)}" target="_blank" rel="noopener">Enviar confirmação no WhatsApp</a></p>
-      <p class="hint" style="margin-top:12px">Precisa remarcar? Fale com o salão pelo WhatsApp ${esc(CFG.whatsapp_txt)}.</p></div>`;
+      <p class="hint" style="margin-top:12px">${CLIENTE ? `Você pode ver e cancelar este horário em <a href="conta.html">Minha conta</a>.` : `Precisa remarcar? Fale com o salão pelo WhatsApp ${esc(CFG.whatsapp_txt)}.`}</p>
+      ${CLIENTE ? "" : `<div class="cta-conta"><b>Quer acompanhar seus horários?</b><span>Crie sua conta com Google para ver, cancelar e receber lembretes.</span><a class="btn btn-ghost btn-sm" href="conta.html">Criar conta</a></div>`}</div>`;
     foot.innerHTML = `<span></span><button class="btn btn-dark" id="fin">Fechar</button>`;
   }
   const bk = $("#bk"); if (bk) bk.onclick = () => { B.step--; renderStep(-1); };
@@ -319,7 +332,8 @@ $("#heroBg").style.backgroundImage = `url(${BG.interior})`;
 $("#bandBg").style.backgroundImage = `url(${BG.maquinas})`;
 $("#infoBg").style.backgroundImage = `url(${BG.cadeiras})`;
 setupReveal();
-carregar().then(renderSite).catch(err => {
+carregarCliente();
+carregar().then(() => { renderSite(); if (location.hash === "#agendar") openBooking(); }).catch(err => {
   console.error(err);
   $("#menu").innerHTML = `<div class="err-box">Não foi possível carregar os serviços agora. Agende pelo WhatsApp (11) 98386-7901.</div>`;
 });

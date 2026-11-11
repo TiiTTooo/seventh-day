@@ -147,3 +147,4 @@ body.adm{background:#E7E6E3;min-height:100vh}
 .agmain .atools{margin:0 0 16px}
 .dayhead{display:flex;align-items:center;gap:12px}
 .dayhead strong{font-family:var(--display);font-size:32px;text-transform:capitalize}
+.contabox{background:#eef6f1;border:1px solid #bfe0cd;border-radius:6px;padding:10px 12px;margin:8px 0;font-size:14px}

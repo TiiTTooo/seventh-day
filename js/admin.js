@@ -305,7 +305,7 @@ function avisoPermissao() {
 let CLI = [];
 const chave = a => a.cliente_tel || "nome:" + a.cliente_nome.trim().toLowerCase();
 async function renderClientes() {
-  const { data, error } = await sb.from("agendamentos").select("id,data,inicio,duracao,status,total,servicos,cliente_nome,cliente_tel,profissional_id,lembrete_em,origem").order("data", { ascending: false }).order("inicio", { ascending: false }).limit(5000);
+  const { data, error } = await sb.from("agendamentos").select("id,data,inicio,duracao,status,total,servicos,cliente_nome,cliente_tel,profissional_id,lembrete_em,origem,cliente_id").order("data", { ascending: false }).order("inicio", { ascending: false }).limit(5000);
   if (error) return fail(error, "Erro ao carregar clientes.");
   const hoje = dkey(new Date()), amanha = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return dkey(d); })();
   const mapa = new Map();
@@ -318,6 +318,11 @@ async function renderClientes() {
     if (a.status === "confirmado" && a.data >= hoje && (!c.proximo || a.data < c.proximo.data || (a.data === c.proximo.data && a.inicio < c.proximo.inicio))) c.proximo = a;
   });
   CLI = [...mapa.values()].sort((x, y) => x.nome.localeCompare(y.nome, "pt-BR"));
+  const ids = [...new Set((data || []).map(a => a.cliente_id).filter(Boolean))];
+  if (ids.length) {
+    const { data: cs } = await sb.from("clientes").select("*").in("user_id", ids);
+    (cs || []).forEach(c => { const alvo = CLI.find(x => x.hist.some(a => a.cliente_id === c.user_id)); if (alvo) alvo.conta = c; });
+  }
   // lembretes de amanhã
   const lemb = (data || []).filter(a => a.data === amanha && a.status === "confirmado" && a.cliente_tel).sort((x, y) => x.inicio - y.inicio);
   $("#lembretes").innerHTML = `<div class="card"><h3>Lembretes para amanhã</h3>${lemb.length ? lemb.map(a => {
@@ -336,7 +341,7 @@ function filtrarClientes() {
   const fd = a => { const d = fromKey(a.data); return pad(d.getDate()) + "/" + pad(d.getMonth() + 1) + "/" + String(d.getFullYear()).slice(2); };
   $("#cliCount").textContent = `${lista.length} cliente(s)`;
   $("#cliList").innerHTML = lista.length ? `<div class="clihead"><span>Cliente</span><span>WhatsApp</span><span>Atendimentos</span><span>Último</span><span>Próximo</span><span>Total gasto</span></div>` + lista.map((c, i) => `
-    <button class="clirow" data-i="${CLI.indexOf(c)}"><span class="cn">${esc(c.nome)}${c.faltas ? ` <span class="tag">${c.faltas} falta(s)</span>` : ""}</span><span>${fmtTel(c.tel) || "—"}</span><span>${c.visitas}</span><span>${c.ultimo ? fd(c.ultimo) : "—"}</span><span>${c.proximo ? `<b>${fd(c.proximo)} ${fmtMin(c.proximo.inicio)}</b>` : "—"}</span><span>${money(c.gasto)}</span></button>`).join("")
+    <button class="clirow" data-i="${CLI.indexOf(c)}"><span class="cn">${esc(c.nome)}${c.conta ? ` <span class="tag ok">Conta</span>` : ""}${c.faltas ? ` <span class="tag">${c.faltas} falta(s)</span>` : ""}</span><span>${fmtTel(c.tel) || "—"}</span><span>${c.visitas}</span><span>${c.ultimo ? fd(c.ultimo) : "—"}</span><span>${c.proximo ? `<b>${fd(c.proximo)} ${fmtMin(c.proximo.inicio)}</b>` : "—"}</span><span>${money(c.gasto)}</span></button>`).join("")
     : `<div class="empty">${CLI.length ? "Nenhum cliente encontrado." : "Os clientes aparecem aqui a partir do primeiro agendamento."}</div>`;
   $("#cliList").querySelectorAll("[data-i]").forEach(b => b.onclick = () => fichaCliente(CLI[+b.dataset.i]));
 }
@@ -344,6 +349,7 @@ $("#cliBusca").addEventListener("input", filtrarClientes);
 function fichaCliente(c) {
   const st = { confirmado: "Confirmado", concluido: "Concluído", faltou: "Faltou", cancelado: "Cancelado" };
   openModal(`<h3>${esc(c.nome)}</h3>
+    ${c.conta ? `<div class="contabox"><b>Cliente com conta</b> · ${esc(c.conta.nome + " " + c.conta.sobrenome)} · ${esc(c.conta.email || "")}${c.conta.nascimento ? " · aniversário " + c.conta.nascimento.slice(8, 10) + "/" + c.conta.nascimento.slice(5, 7) : ""}${DONO && c.conta.cpf ? " · CPF " + c.conta.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4") : ""}<br>Lembretes: ${c.conta.aceite_lembretes ? "sim" : "não quer"} · Novidades: ${c.conta.aceite_novidades ? "sim" : "não"}</div>` : ""}
     <p class="hint">${c.tel ? fmtTel(c.tel) + " · " : ""}${c.visitas} atendimento(s) · ${money(c.gasto)} gastos${c.faltas ? " · " + c.faltas + " falta(s)" : ""}</p>
     <div class="hist">${c.hist.map(a => { const d = fromKey(a.data), p = EQUIPE.find(x => x.id === a.profissional_id); return `<div class="hrow2 st-${a.status}"><span>${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${fmtMin(a.inicio)}</span><span>${esc((a.servicos || []).map(s => s.nome).join(" + "))}${p ? " · " + esc(p.nome.split(" ")[0]) : ""}</span><span>${st[a.status]}</span></div>`; }).join("")}</div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap">
