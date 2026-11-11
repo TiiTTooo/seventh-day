@@ -44,7 +44,9 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": 
 const waLink = (num, txt) => "https://wa.me/" + num + "?text=" + encodeURIComponent(txt);
 const avatar = (b, cls = "avatar") => b.foto_url ? `<span class="${cls} ph"><img src="${esc(b.foto_url)}" alt=""></span>` : `<span class="${cls}">${esc(initials(b.nome))}</span>`;
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.remove("hidden"); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add("hidden"), 3000); }
-function nowMin() { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); }
+/* Hora de São Paulo, independente do fuso do aparelho do cliente */
+function spNow() { const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(new Date()).map(x => [x.type, x.value])); return new Date(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second); }
+function nowMin() { const n = spNow(); return n.getHours() * 60 + n.getMinutes(); }
 
 /* ===================== dados ===================== */
 async function carregar() {
@@ -62,7 +64,7 @@ async function carregar() {
   await carregarOcupados();
 }
 async function carregarOcupados() {
-  const hoje = new Date(), fim = new Date(); fim.setDate(fim.getDate() + (CFG?.dias_abertos || 14));
+  const hoje = spNow(), fim = spNow(); fim.setDate(fim.getDate() + (CFG?.dias_abertos || 14));
   const { data, error } = await sb.rpc("horarios_ocupados", { p_de: dkey(hoje), p_ate: dkey(fim) });
   if (error) throw error;
   OCUP = data || [];
@@ -74,7 +76,7 @@ function busy(k, pid) { return OCUP.filter(o => o.data === k && (o.profissional_
 function freeSlots(k, pid, dur) {
   const h = hoursFor(k); if (!h) return [];
   const open = toMin(h[0]), close = toMin(h[1]);
-  const min = k === dkey(new Date()) ? nowMin() + CFG.antecedencia : 0;
+  const min = k === dkey(spNow()) ? nowMin() + CFG.antecedencia : 0;
   const b = busy(k, pid), out = [];
   for (let t = open; t + dur <= close; t += CFG.intervalo) {
     if (t < min) continue;
@@ -113,24 +115,24 @@ function renderSite() {
   $("#faq").innerHTML = FAQ.map(([q, a]) => `<details><summary>${esc(q)}</summary><p>${esc(a)}</p></details>`).join("");
   $("#team").innerHTML = EQUIPE.map(b => `<div class="barber">${avatar(b)}<h4>${esc(b.nome)}</h4><p>${esc(b.descricao)}</p><button class="btn btn-ghost btn-sm agb" data-barber="${b.id}">Agendar com ${esc(b.nome.split(" ")[0])}</button></div>`).join("");
 
-  const today = new Date().getDay();
+  const today = spNow().getDay();
   $("#hours").innerHTML = [1, 2, 3, 4, 5, 6, 0].map(d => { const h = CFG.horarios[String(d)]; return `<div class="${d === today ? "today" : ""}"><span>${WDL[d]}</span><span>${Array.isArray(h) ? h[0] + " às " + h[1] : "Fechado"}</span></div>`; }).join("");
   renderStatus();
   setupReveal();
 }
 function renderStatus() {
-  const now = new Date(), h = CFG.horarios[String(now.getDay())], m = nowMin();
+  const now = spNow(), h = CFG.horarios[String(now.getDay())], m = nowMin();
   const open = Array.isArray(h) && m >= toMin(h[0]) && m < toMin(h[1]);
   $("#statusDot").classList.toggle("on", !!open);
   $("#statusText").textContent = open ? "Aberto agora" : "Fechado agora";
   if (open) $("#statusSub").textContent = "Fecha às " + h[1];
-  else for (let i = 0; i < 8; i++) { const d = new Date(); d.setDate(d.getDate() + i); const hh = CFG.horarios[String(d.getDay())];
+  else for (let i = 0; i < 8; i++) { const d = spNow(); d.setDate(d.getDate() + i); const hh = CFG.horarios[String(d.getDay())];
     if (!Array.isArray(hh)) continue; if (i === 0 && m >= toMin(hh[0])) continue;
     $("#statusSub").textContent = "Abre " + (i === 0 ? "hoje" : i === 1 ? "amanhã" : WDL[d.getDay()].toLowerCase()) + " às " + hh[0]; break; }
   const base = SERV[0];
   if (!base || !EQUIPE.length) return;
   for (let i = 0; i < CFG.dias_abertos; i++) {
-    const d = new Date(); d.setDate(d.getDate() + i); const s = freeSlotsAny(dkey(d), base.duracao);
+    const d = spNow(); d.setDate(d.getDate() + i); const s = freeSlotsAny(dkey(d), base.duracao);
     if (s.length) { $("#nextSlot").textContent = (i === 0 ? "Hoje" : i === 1 ? "Amanhã" : WD[d.getDay()] + " " + pad(d.getDate()) + "/" + pad(d.getMonth() + 1)) + ", " + fmtMin(s[0][0]);
       $("#nextSlotWho").textContent = "com " + pro(s[0][1]).nome + " · " + base.nome.toLowerCase(); return; }
   }
@@ -199,7 +201,7 @@ function renderStep(dir) {
   }
   if (B.step === 2) {
     const MES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
-    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+    const t0 = spNow(); t0.setHours(0, 0, 0, 0);
     const tEnd = new Date(t0); tEnd.setDate(tEnd.getDate() + CFG.dias_abertos);
     const todayK = dkey(t0), minK = todayK, maxK = dkey(tEnd);
     const mkey = d => d.getFullYear() + "-" + pad(d.getMonth() + 1);

@@ -14,6 +14,8 @@ const initials = n => String(n || "?").split(" ").map(p => p[0]).join("").slice(
 const avatar = (b, cls = "avatar") => b.foto_url ? `<span class="${cls} ph"><img src="${esc(b.foto_url)}" alt=""></span>` : `<span class="${cls}">${esc(initials(b.nome))}</span>`;
 const waLink = (num, txt) => "https://wa.me/" + num + "?text=" + encodeURIComponent(txt);
 const fmtTel = t => t && t.length >= 10 ? `(${t.slice(0, 2)}) ${t.slice(2, -4)}-${t.slice(-4)}` : (t || "");
+/* Hora de São Paulo, independente do fuso do aparelho do cliente */
+function spNow() { const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(new Date()).map(x => [x.type, x.value])); return new Date(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second); }
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.remove("hidden"); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add("hidden"), 3200); }
 function openModal(html) { $("#modalBox").innerHTML = html; $("#modal").classList.remove("hidden"); const f = $("#modalBox").querySelector("input,select"); if (f) f.focus(); }
 function closeModal() { $("#modal").classList.add("hidden"); }
@@ -95,7 +97,7 @@ sb.auth.onAuthStateChange(async (ev, session) => {
 });
 let iniciado = false;
 async function iniciar(session) {
-  const { data, error } = await sb.from("equipe").select("*").eq("user_id", session.user.id).eq("ativo", true).maybeSingle();
+  const { data: lista, error } = await sb.rpc("equipe_painel"); const data = (lista || []).find(p => p.user_id === session.user.id && p.ativo);
   if (error || !data) { show("noAccess"); return; }
   EU = data; MASTER = data.papel === "master"; DONO = MASTER || data.papel === "dono";
   $("#userName").textContent = data.nome.split(" ")[0]; $("#userBox").classList.remove("hidden");
@@ -109,7 +111,7 @@ async function iniciar(session) {
 }
 async function carregarBase() {
   const [e, s, c] = await Promise.all([
-    sb.from("equipe").select("*").order("ordem"),
+    DONO ? sb.rpc("equipe_painel") : sb.from("equipe").select("id,nome,descricao,foto_url,papel,ativo,atende,ordem").order("ordem"),
     sb.from("servicos").select("*").order("ordem"),
     sb.from("config").select("*").eq("id", 1).single()
   ]);
@@ -125,12 +127,12 @@ function abrirAba(t) {
 }
 
 /* ===================== agenda ===================== */
-let dia = dkey(new Date()), AG = [], BL = [], novos = new Set();
+let dia = dkey(spNow()), AG = [], BL = [], novos = new Set();
 const profs = () => EQUIPE.filter(p => p.ativo && p.atende && (DONO || p.id === EU.id));
 const shiftDay = n => { const d = fromKey(dia); d.setDate(d.getDate() + n); dia = dkey(d); renderAgenda(); };
-$("#todayBtn").onclick = () => { dia = dkey(new Date()); calMes = null; renderAgenda(); };
+$("#todayBtn").onclick = () => { dia = dkey(spNow()); calMes = null; renderAgenda(); };
 let calMes = null, MES = [], AVS = {};
-const agoraSP = () => { const n = new Date(); return { k: dkey(n), m: n.getHours() * 60 + n.getMinutes() }; };
+const agoraSP = () => { const n = spNow(); return { k: dkey(n), m: n.getHours() * 60 + n.getMinutes() }; };
 const passou = a => { const n = agoraSP(); return a.data < n.k || (a.data === n.k && a.inicio + a.duracao <= n.m); };
 async function mudarStatus(ids, st) {
   const { error } = await sb.from("agendamentos").update({ status: st }).in("id", ids);
@@ -140,7 +142,7 @@ async function mudarStatus(ids, st) {
 }
 /* Horários que já passaram e ninguém marcou: últimos 14 dias */
 async function renderPendentes() {
-  const box = $("#pendentes"), n = agoraSP(), ini = new Date(); ini.setDate(ini.getDate() - 14);
+  const box = $("#pendentes"), n = agoraSP(), ini = spNow(); ini.setDate(ini.getDate() - 14);
   let q = sb.from("agendamentos").select("id,data,inicio,duracao,cliente_nome,profissional_id,servicos").eq("status", "confirmado").gte("data", dkey(ini)).lte("data", n.k).order("data").order("inicio");
   if (!DONO) q = q.eq("profissional_id", EU.id);
   const { data } = await q;
@@ -162,7 +164,7 @@ async function renderMes() {
   const { data } = await sb.from("agendamentos").select("data,status,total,profissional_id").gte("data", dkey(base)).lte("data", dkey(fim));
   MES = data || [];
   const porDia = {}; MES.filter(a => a.status !== "cancelado").forEach(a => porDia[a.data] = (porDia[a.data] || 0) + 1);
-  const hoje = dkey(new Date()), cells = [];
+  const hoje = dkey(spNow()), cells = [];
   for (let i = 0; i < base.getDay(); i++) cells.push(`<span></span>`);
   for (let d = 1; d <= fim.getDate(); d++) {
     const k = calMes + "-" + pad(d), h = CFG.horarios[String(new Date(base.getFullYear(), base.getMonth(), d).getDay())], n = porDia[k] || 0;
@@ -204,7 +206,7 @@ async function renderAgenda() {
     return `<div class="col"><h4>${avatar(p)}${esc(p.nome)}</h4>${items.length ? items.map(({ k, v }) => k === "a" ? `
       <div class="appt st-${v.status} ${novos.has(v.id) ? "novo" : ""}">
         <div class="t">${fmtMin(v.inicio)}–${fmtMin(v.inicio + v.duracao)} · ${esc(v.cliente_nome)}</div>
-        <div class="s">${esc((v.servicos || []).map(s => s.nome).join(" + "))} · ${money(v.total)}${v.origem === "balcao" ? " · encaixe" : ""}</div>
+        <div class="s">${esc((v.servicos || []).map(s => s.nome).join(" + "))} ${DONO ? " · " + money(v.total) : ""}${v.origem === "balcao" ? " · encaixe" : ""}</div>
         ${v.cliente_tel ? `<div class="s">${fmtTel(v.cliente_tel)}</div>` : ""}
         ${v.status === "confirmado" && passou(v) ? `<div class="quick"><span>Já passou do horário:</span><button class="btn btn-sm qok" data-q="concluido" data-id="${v.id}">Atendido</button><button class="btn btn-sm qno" data-q="faltou" data-id="${v.id}">Faltou</button></div>` : ""}
         ${v.concluido_auto ? `<div class="s"><span class="tag">Confirmado automaticamente</span></div>` : ""}
@@ -312,7 +314,7 @@ function mostrarFila() {
   openModal(`<div class="novo-pop"><div class="sino" aria-hidden="true">🔔</div><h3>Novo agendamento</h3>
     <p class="big">${esc(a.cliente_nome)}</p>
     <p>${WDL[d.getDay()]}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)} às <b>${fmtMin(a.inicio)}</b>${p ? " com " + esc(p.nome) : ""}</p>
-    <p class="hint">${esc((a.servicos || []).map(s => s.nome).join(" + "))} · ${money(a.total)}</p>
+    <p class="hint">${esc((a.servicos || []).map(s => s.nome).join(" + "))}${DONO ? " · " + money(a.total) : ""}</p>
     ${fila.length > 1 ? `<p class="hint">+${fila.length - 1} outro(s) na fila</p>` : ""}
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px"><button class="btn btn-ghost" id="pOk">Ok</button><button class="btn btn-brass" id="pVer">Ver na agenda</button></div></div>`);
   const fechar = () => { fila.shift(); closeModal(); if (fila.length) setTimeout(mostrarFila, 200); };
@@ -350,7 +352,7 @@ const chave = a => a.cliente_tel || "nome:" + a.cliente_nome.trim().toLowerCase(
 async function renderClientes() {
   const { data, error } = await sb.from("agendamentos").select("id,data,inicio,duracao,status,total,servicos,cliente_nome,cliente_tel,profissional_id,lembrete_em,origem,cliente_id").order("data", { ascending: false }).order("inicio", { ascending: false }).limit(5000);
   if (error) return fail(error, "Erro ao carregar clientes.");
-  const hoje = dkey(new Date()), amanha = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return dkey(d); })();
+  const hoje = dkey(spNow()), amanha = (() => { const d = spNow(); d.setDate(d.getDate() + 1); return dkey(d); })();
   const mapa = new Map();
   (data || []).forEach(a => {
     const k = chave(a); let c = mapa.get(k);
@@ -402,7 +404,7 @@ function fichaCliente(c) {
   $("#cliF").onclick = closeModal;
   const ag = $("#cliAg"); if (ag) ag.onclick = async () => {
     closeModal();
-    const reg = await formAgendamento("Novo horário para " + c.nome, { cliente_nome: c.nome, cliente_tel: c.tel, data: dkey(new Date()), inicio: 600, servicos: [], profissional_id: DONO ? null : EU.id, _novo: true });
+    const reg = await formAgendamento("Novo horário para " + c.nome, { cliente_nome: c.nome, cliente_tel: c.tel, data: dkey(spNow()), inicio: 600, servicos: [], profissional_id: DONO ? null : EU.id, _novo: true });
     const { error } = await sb.from("agendamentos").insert({ ...reg, origem: "balcao" });
     if (error) return fail(error); closeModal(); toast("Horário marcado."); dia = reg.data; renderClientes();
   };
@@ -412,7 +414,7 @@ function fichaCliente(c) {
 let fatMes = null;
 const brl = v => "R$ " + Number(v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const soma = l => l.reduce((s, a) => s + Number(a.total || 0), 0);
-function tip(el, html) { const t = $("#chartTip"); t.innerHTML = html; t.classList.remove("hidden"); const r = el.getBoundingClientRect(); t.style.left = Math.min(innerWidth - t.offsetWidth - 8, Math.max(8, r.left + r.width / 2 - t.offsetWidth / 2)) + "px"; t.style.top = (r.top + scrollY - t.offsetHeight - 8) + "px"; }
+function tip(el, html) { const t = $("#chartTip"); t.textContent = html; t.classList.remove("hidden"); const r = el.getBoundingClientRect(); t.style.left = Math.min(innerWidth - t.offsetWidth - 8, Math.max(8, r.left + r.width / 2 - t.offsetWidth / 2)) + "px"; t.style.top = (r.top + scrollY - t.offsetHeight - 8) + "px"; }
 function semTip() { $("#chartTip").classList.add("hidden"); }
 function barrasV(itens, { alt = 180, fmt = brl, destaque = null } = {}) {
   const max = Math.max(1, ...itens.map(i => i.v)), w = 100 / itens.length;
@@ -430,7 +432,7 @@ function barrasH(itens, fmt = brl) {
 }
 async function renderFaturamento() {
   if (!DONO) return abrirAba("agenda");
-  const base = fromKey((fatMes || dkey(new Date()).slice(0, 7)) + "-01");
+  const base = fromKey((fatMes || dkey(spNow()).slice(0, 7)) + "-01");
   fatMes = base.getFullYear() + "-" + pad(base.getMonth() + 1);
   const ini6 = new Date(base.getFullYear(), base.getMonth() - 5, 1), fim = new Date(base.getFullYear(), base.getMonth() + 1, 0);
   const ant = new Date(base.getFullYear(), base.getMonth() - 1, 1);
@@ -446,7 +448,7 @@ async function renderFaturamento() {
   const site = noMes.filter(a => a.status !== "cancelado" && a.origem === "site").length, totAt = noMes.filter(a => a.status !== "cancelado").length;
   const mesNome = MESES[base.getMonth()] + " " + base.getFullYear();
   // séries
-  const dias = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate(), hojeK = dkey(new Date());
+  const dias = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate(), hojeK = dkey(spNow());
   const porDia = Array.from({ length: dias }, (_, i) => { const k = fatMes + "-" + pad(i + 1); const c = conc.filter(a => a.data === k); return { l: pad(i + 1) + "/" + pad(base.getMonth() + 1), v: soma(c), lx: (i + 1) % 5 === 1 || i + 1 === dias ? i + 1 : "", tip: `${pad(i + 1)}/${pad(base.getMonth() + 1)}: ${brl(soma(c))} em ${c.length} atendimento(s)`, hoje: k === hojeK }; });
   const seis = Array.from({ length: 6 }, (_, i) => { const d = new Date(base.getFullYear(), base.getMonth() - 5 + i, 1), k = d.getFullYear() + "-" + pad(d.getMonth() + 1); const c = T.filter(a => a.data.startsWith(k) && a.status === "concluido"); return { l: MESES[d.getMonth()], v: soma(c), lx: MESES[d.getMonth()].slice(0, 3), tip: `${MESES[d.getMonth()]}: ${brl(soma(c))} em ${c.length} atendimento(s)` }; });
   const porPro = profs().map(p => { const c = conc.filter(a => a.profissional_id === p.id); return { l: p.nome.split(" ")[0], v: soma(c), tip: `${p.nome}: ${brl(soma(c))} em ${c.length} atendimento(s)` }; }).sort((a, b) => b.v - a.v);
@@ -554,7 +556,7 @@ const papelOpts = atual => [["profissional", "Profissional: vê só a própria a
   .map(([v, l]) => `<option value="${v}" ${atual === v ? "selected" : ""}>${l}</option>`).join("");
 let CONV = {};
 async function renderEquipe() {
-  const [{ data }, cv] = await Promise.all([sb.from("equipe").select("*").order("ordem"), sb.from("convites").select("*")]);
+  const [{ data }, cv] = await Promise.all([sb.rpc("equipe_painel"), sb.from("convites").select("*")]);
   EQUIPE = data || []; CONV = Object.fromEntries((cv.data || []).map(c => [c.equipe_id, c]));
   const fmtExp = d => { const x = new Date(d); return pad(x.getDate()) + "/" + pad(x.getMonth() + 1) + " às " + pad(x.getHours()) + ":" + pad(x.getMinutes()); };
   const conviteBox = p => {

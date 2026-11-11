@@ -11,7 +11,7 @@ insert into public.servicos (categoria,nome,duracao,preco,obs,ordem) values
 insert into public.equipe (nome,descricao,foto_url,papel,atende,ordem,email) values
 ('Roque Jesus','Proprietário','/fotos/equipe-roque.jpg','dono',true,0,null),
 ('Lucas','Cabeleireiro e barbeiro','/fotos/equipe-lucas.jpg','profissional',true,1,null),
-('Tito (administrador)','Acesso de administração do site',null,'dono',false,9,'victorlimads14@gmail.com');
+('Tito (administrador)','Acesso de administração do site',null,'dono',false,9,'SEU-EMAIL-AQUI');
 
 insert into public.galeria (url,legenda,secao,ordem) values
 ('/fotos/p0_0.jpg','Fachada do salão','fachada',0),

@@ -9,6 +9,8 @@ const WDL = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sába
 const money = v => "R$ " + Number(v || 0).toFixed(0);
 const fmtTel = t => t && t.length >= 10 ? `(${t.slice(0, 2)}) ${t.slice(2, -4)}-${t.slice(-4)}` : (t || "");
 const fmtCpf = c => c ? c.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4") : "";
+/* Hora de São Paulo, independente do fuso do aparelho do cliente */
+function spNow() { const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(new Date()).map(x => [x.type, x.value])); return new Date(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second); }
 function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.remove("hidden"); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add("hidden"), 3200); }
 function openModal(h) { $("#modalBox").innerHTML = h; $("#modal").classList.remove("hidden"); }
 function closeModal() { $("#modal").classList.add("hidden"); }
@@ -155,7 +157,7 @@ async function renderArea() {
   const { data } = await sb.from("agendamentos").select("id,data,inicio,duracao,status,total,servicos,profissional_id").eq("cliente_id", USER.id).order("data", { ascending: false }).order("inicio", { ascending: false });
   const { data: eq } = await sb.from("equipe").select("id,nome");
   const pro = id => (eq || []).find(x => x.id === id)?.nome?.split(" ")[0] || "";
-  const agora = new Date(), hojeMin = agora.getHours() * 60 + agora.getMinutes();
+  const agora = spNow(), hojeMin = agora.getHours() * 60 + agora.getMinutes();
   const hojeK = agora.getFullYear() + "-" + pad(agora.getMonth() + 1) + "-" + pad(agora.getDate());
   const futuro = a => a.data > hojeK || (a.data === hojeK && a.inicio >= hojeMin);
   const prox = (data || []).filter(a => a.status === "confirmado" && futuro(a)).reverse();
@@ -164,7 +166,8 @@ async function renderArea() {
   const AV = {}; (avs || []).forEach(x => AV[x.agendamento_id] = x);
   const limite = new Date(agora); limite.setDate(limite.getDate() - 60);
   const limK = limite.getFullYear() + "-" + pad(limite.getMonth() + 1) + "-" + pad(limite.getDate());
-  const podeAvaliar = a => (a.status === "concluido" || a.status === "confirmado") && !futuro(a) && a.data >= limK;
+  const terminou = a => a.data < hojeK || (a.data === hojeK && a.inicio + (a.duracao || 0) <= hojeMin);
+  const podeAvaliar = a => (a.status === "concluido" || a.status === "confirmado") && terminou(a) && a.data >= limK;
   const estrelas = n => `<span class="stars" aria-label="${n} de 5 estrelas">${"★".repeat(n)}${"☆".repeat(5 - n)}</span>`;
   const acaoAval = a => AV[a.id] ? `<button class="avok" data-aval="${a.id}" title="Editar avaliação">${estrelas(AV[a.id].nota)}</button>` : podeAvaliar(a) ? `<button class="btn btn-ghost btn-sm" data-aval="${a.id}">Avaliar</button>` : "";
   const linha = (a, cancelar) => { const d = fromKey(a.data); return `<div class="ag"><div><b>${WDL[d.getDay()]}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)} às ${fmtMin(a.inicio)}</b><div class="hint">${esc((a.servicos || []).map(s => s.nome).join(" + "))}${pro(a.profissional_id) ? " com " + esc(pro(a.profissional_id)) : ""} · ${money(a.total)}</div></div>${cancelar ? `<button class="linkbtn2" data-cancel="${a.id}">Cancelar</button>` : `<span class="st st-${a.status}">${({ concluido: "Atendido", faltou: "Faltou", cancelado: "Cancelado", confirmado: "Confirmado" })[a.status === "confirmado" && !futuro(a) ? "concluido" : a.status]}</span>${acaoAval(a)}`}</div>`; };
@@ -217,6 +220,8 @@ $("#excluir").onclick = () => {
   $("#xN").onclick = closeModal;
   $("#xS").onclick = async () => {
     if ($("#confx").value.trim().toUpperCase() !== "EXCLUIR") return toast("Digite EXCLUIR para confirmar.");
+    const { data: fs } = await sb.storage.from("clientes").list(USER.id);
+    if (fs && fs.length) await sb.storage.from("clientes").remove(fs.map(f => `${USER.id}/${f.name}`));
     const { error } = await sb.rpc("excluir_minha_conta"); if (error) return toast(error.message);
     try { localStorage.removeItem("seventhday_cliente"); } catch (e) {}
     await sb.auth.signOut(); closeModal(); toast("Conta excluída."); setTimeout(() => location.href = "index.html", 1200);
