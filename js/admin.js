@@ -121,7 +121,7 @@ document.querySelectorAll(".atabs button").forEach(b => b.onclick = () => abrirA
 function abrirAba(t) {
   document.querySelectorAll(".atabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
   document.querySelectorAll(".tab").forEach(s => s.classList.toggle("hidden", s.id !== "tab-" + t));
-  ({ agenda: renderAgenda, clientes: renderClientes, servicos: renderServicos, equipe: renderEquipe, imagens: renderImagens, config: renderConfig })[t]();
+  ({ agenda: renderAgenda, clientes: renderClientes, faturamento: renderFaturamento, servicos: renderServicos, equipe: renderEquipe, imagens: renderImagens, config: renderConfig })[t]();
 }
 
 /* ===================== agenda ===================== */
@@ -151,12 +151,12 @@ async function renderMes() {
   $("#mcal").querySelectorAll("[data-k]").forEach(b => b.onclick = () => { dia = b.dataset.k; renderAgenda(); });
   const act = MES.filter(a => a.status !== "cancelado"), conc = MES.filter(a => a.status === "concluido");
   $("#mstats").innerHTML = `<h4>Mês de ${MESES[base.getMonth()]}</h4>
-    <div class="ms"><span>Faturamento previsto</span><b>${money(act.reduce((s, a) => s + Number(a.total), 0))}</b></div>
-    <div class="ms"><span>Faturamento concluído</span><b>${money(conc.reduce((s, a) => s + Number(a.total), 0))}</b></div>
     <div class="ms"><span>Agendamentos</span><b>${act.length}</b></div>
     <div class="ms"><span>Atendidos</span><b>${conc.length}</b></div>
     <div class="ms"><span>Faltas</span><b>${MES.filter(a => a.status === "faltou").length}</b></div>
-    ${DONO ? profs().map(p => `<div class="ms sub"><span>${esc(p.nome.split(" ")[0])} (concluído)</span><b>${money(conc.filter(a => a.profissional_id === p.id).reduce((s, a) => s + Number(a.total), 0))}</b></div>`).join("") : ""}`;
+    <div class="ms"><span>Cancelados</span><b>${MES.filter(a => a.status === "cancelado").length}</b></div>
+    ${DONO ? `<button class="linkbtn2" id="verFat" style="margin-top:10px">Ver faturamento do mês →</button>` : ""}`;
+  const vf = $("#verFat"); if (vf) vf.onclick = () => { fatMes = calMes; abrirAba("faturamento"); };
 }
 
 async function renderAgenda() {
@@ -171,7 +171,7 @@ async function renderAgenda() {
   if (a.error) return fail(a.error, "Erro ao carregar a agenda.");
   AG = a.data || []; BL = b.data || [];
   const act = AG.filter(x => x.status !== "cancelado");
-  $("#stats").innerHTML = [["Agendamentos", act.length], ["Previsto no dia", money(act.reduce((s, x) => s + Number(x.total), 0))], ["Concluído no dia", money(AG.filter(x => x.status === "concluido").reduce((s, x) => s + Number(x.total), 0))], ["Faltas", AG.filter(x => x.status === "faltou").length]]
+  $("#stats").innerHTML = [["Agendamentos", act.length], ["A atender", AG.filter(x => x.status === "confirmado").length], ["Atendidos", AG.filter(x => x.status === "concluido").length], ["Faltas", AG.filter(x => x.status === "faltou").length]]
     .map(([l, v]) => `<div class="stat"><small>${l}</small><b>${v}</b></div>`).join("");
   $("#cols").innerHTML = profs().map(p => {
     const items = [...AG.filter(x => x.profissional_id === p.id).map(v => ({ k: "a", t: v.inicio, v })), ...BL.filter(x => x.profissional_id === p.id || x.profissional_id === null).map(v => ({ k: "b", t: v.inicio, v }))].sort((x, y) => x.t - y.t);
@@ -375,6 +375,81 @@ function fichaCliente(c) {
     const { error } = await sb.from("agendamentos").insert({ ...reg, origem: "balcao" });
     if (error) return fail(error); closeModal(); toast("Horário marcado."); dia = reg.data; renderClientes();
   };
+}
+
+/* ===================== faturamento (só dono/master) ===================== */
+let fatMes = null;
+const brl = v => "R$ " + Number(v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+const soma = l => l.reduce((s, a) => s + Number(a.total || 0), 0);
+function tip(el, html) { const t = $("#chartTip"); t.innerHTML = html; t.classList.remove("hidden"); const r = el.getBoundingClientRect(); t.style.left = Math.min(innerWidth - t.offsetWidth - 8, Math.max(8, r.left + r.width / 2 - t.offsetWidth / 2)) + "px"; t.style.top = (r.top + scrollY - t.offsetHeight - 8) + "px"; }
+function semTip() { $("#chartTip").classList.add("hidden"); }
+function barrasV(itens, { alt = 180, fmt = brl, destaque = null } = {}) {
+  const max = Math.max(1, ...itens.map(i => i.v)), w = 100 / itens.length;
+  const passo = max <= 4 ? 1 : Math.pow(10, Math.floor(Math.log10(max))) * (max / Math.pow(10, Math.floor(Math.log10(max))) > 5 ? 2 : 1);
+  const topo = Math.ceil(max / passo) * passo, linhas = [];
+  for (let g = 0; g <= topo; g += passo) linhas.push(g);
+  return `<div class="vchart" style="height:${alt}px">
+    <div class="vgrid">${linhas.map(g => `<div style="bottom:${(g / topo) * 100}%"><span>${fmt(g)}</span></div>`).join("")}</div>
+    <div class="vbars">${itens.map((i, k) => `<div class="vcol" style="width:${w}%" data-tip="${esc(i.tip || (i.l + ": " + fmt(i.v)))}"><div class="vbar ${destaque === k ? "hl" : ""}" style="height:${(i.v / topo) * 100}%"></div></div>`).join("")}</div>
+    </div><div class="vlabels">${itens.map((i, k) => `<span style="width:${w}%">${i.lx ?? ""}</span>`).join("")}</div>`;
+}
+function barrasH(itens, fmt = brl) {
+  const max = Math.max(1, ...itens.map(i => i.v));
+  return itens.length ? `<div class="hchart">${itens.map(i => `<div class="hrow" data-tip="${esc(i.tip || (i.l + ": " + fmt(i.v)))}"><span class="hl">${esc(i.l)}</span><div class="htrack"><div class="hbar" style="width:${Math.max(1.5, (i.v / max) * 100)}%"></div></div><b>${fmt(i.v)}</b></div>`).join("")}</div>` : `<p class="hint">Sem dados no período.</p>`;
+}
+async function renderFaturamento() {
+  if (!DONO) return abrirAba("agenda");
+  const base = fromKey((fatMes || dkey(new Date()).slice(0, 7)) + "-01");
+  fatMes = base.getFullYear() + "-" + pad(base.getMonth() + 1);
+  const ini6 = new Date(base.getFullYear(), base.getMonth() - 5, 1), fim = new Date(base.getFullYear(), base.getMonth() + 1, 0);
+  const ant = new Date(base.getFullYear(), base.getMonth() - 1, 1);
+  const { data, error } = await sb.from("agendamentos").select("data,inicio,status,total,servicos,profissional_id,origem,cliente_tel,cliente_nome").gte("data", dkey(ini6)).lte("data", dkey(fim));
+  if (error) return fail(error, "Erro ao carregar o faturamento.");
+  const T = data || [], noMes = T.filter(a => a.data.startsWith(fatMes)), noAnt = T.filter(a => a.data.startsWith(ant.getFullYear() + "-" + pad(ant.getMonth() + 1)));
+  const conc = noMes.filter(a => a.status === "concluido"), conf = noMes.filter(a => a.status === "confirmado"), falt = noMes.filter(a => a.status === "faltou"), canc = noMes.filter(a => a.status === "cancelado");
+  const vConc = soma(conc), vAnt = soma(noAnt.filter(a => a.status === "concluido"));
+  const delta = vAnt ? Math.round(((vConc - vAnt) / vAnt) * 100) : null;
+  const ticket = conc.length ? vConc / conc.length : 0;
+  const marcados = conc.length + falt.length, taxaFalta = marcados ? Math.round((falt.length / marcados) * 100) : 0;
+  const unicos = new Set(conc.map(a => a.cliente_tel || a.cliente_nome)).size;
+  const site = noMes.filter(a => a.status !== "cancelado" && a.origem === "site").length, totAt = noMes.filter(a => a.status !== "cancelado").length;
+  const mesNome = MESES[base.getMonth()] + " " + base.getFullYear();
+  // séries
+  const dias = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate(), hojeK = dkey(new Date());
+  const porDia = Array.from({ length: dias }, (_, i) => { const k = fatMes + "-" + pad(i + 1); const c = conc.filter(a => a.data === k); return { l: pad(i + 1) + "/" + pad(base.getMonth() + 1), v: soma(c), lx: (i + 1) % 5 === 1 || i + 1 === dias ? i + 1 : "", tip: `${pad(i + 1)}/${pad(base.getMonth() + 1)}: ${brl(soma(c))} em ${c.length} atendimento(s)`, hoje: k === hojeK }; });
+  const seis = Array.from({ length: 6 }, (_, i) => { const d = new Date(base.getFullYear(), base.getMonth() - 5 + i, 1), k = d.getFullYear() + "-" + pad(d.getMonth() + 1); const c = T.filter(a => a.data.startsWith(k) && a.status === "concluido"); return { l: MESES[d.getMonth()], v: soma(c), lx: MESES[d.getMonth()].slice(0, 3), tip: `${MESES[d.getMonth()]}: ${brl(soma(c))} em ${c.length} atendimento(s)` }; });
+  const porPro = profs().map(p => { const c = conc.filter(a => a.profissional_id === p.id); return { l: p.nome.split(" ")[0], v: soma(c), tip: `${p.nome}: ${brl(soma(c))} em ${c.length} atendimento(s)` }; }).sort((a, b) => b.v - a.v);
+  const sv = {}; conc.forEach(a => (a.servicos || []).forEach(x => { sv[x.nome] = sv[x.nome] || { v: 0, n: 0 }; sv[x.nome].v += Number(x.preco || 0); sv[x.nome].n++; }));
+  const topSv = Object.entries(sv).map(([l, o]) => ({ l, v: o.v, tip: `${l}: ${brl(o.v)} em ${o.n} vez(es)` })).sort((a, b) => b.v - a.v).slice(0, 8);
+  const sem = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"].map((l, d) => { const c = conc.filter(a => fromKey(a.data).getDay() === d); return { l, v: c.length, lx: l, tip: `${WDL[d]}: ${c.length} atendimento(s), ${brl(soma(c))}` }; });
+  const horas = {}; conc.forEach(a => { const h = Math.floor(a.inicio / 60); horas[h] = (horas[h] || 0) + 1; });
+  const hs = Object.keys(horas).map(Number); const hMin = Math.min(9, ...hs), hMax = Math.max(19, ...hs);
+  const porHora = []; for (let h = hMin; h <= hMax; h++) porHora.push({ l: h + "h", v: horas[h] || 0, lx: h % 2 === 0 ? h + "h" : "", tip: `${h}h: ${horas[h] || 0} atendimento(s)` });
+  $("#fatBody").innerHTML = `
+    <div class="fathead"><div class="mch"><button class="btn btn-ghost btn-sm" id="fPrev" aria-label="Mês anterior">‹</button><strong>${mesNome}</strong><button class="btn btn-ghost btn-sm" id="fNext" aria-label="Próximo mês">›</button></div>
+      <p class="hint">Conta só atendimentos marcados como <b>Concluído</b> na agenda. Valores “a partir de”: se cobrou diferente, ajuste o agendamento.</p></div>
+    <div class="kpis">
+      <div class="kpi big"><small>Faturamento concluído</small><b>${brl(vConc)}</b><span class="${delta === null ? "" : delta >= 0 ? "up" : "down"}">${delta === null ? "sem dados do mês anterior" : (delta >= 0 ? "▲ " : "▼ ") + Math.abs(delta) + "% vs " + MESES[ant.getMonth()]}</span></div>
+      <div class="kpi"><small>Ainda a receber (confirmados)</small><b>${brl(soma(conf))}</b><span>${conf.length} horário(s)</span></div>
+      <div class="kpi"><small>Ticket médio</small><b>${brl(ticket)}</b><span>${conc.length} atendimento(s)</span></div>
+      <div class="kpi"><small>Faltas</small><b>${taxaFalta}%</b><span>${falt.length} falta(s), ${brl(soma(falt))} perdidos</span></div>
+      <div class="kpi"><small>Clientes atendidos</small><b>${unicos}</b><span>${canc.length} cancelamento(s)</span></div>
+      <div class="kpi"><small>Agendados pelo site</small><b>${totAt ? Math.round((site / totAt) * 100) : 0}%</b><span>${site} de ${totAt} horário(s)</span></div>
+    </div>
+    <div class="fgrid">
+      <div class="fcard wide"><h4>Faturamento por dia</h4>${barrasV(porDia, { destaque: porDia.findIndex(d => d.hoje) })}</div>
+      <div class="fcard"><h4>Últimos 6 meses</h4>${barrasV(seis, { destaque: 5 })}</div>
+      <div class="fcard"><h4>Por profissional</h4>${barrasH(porPro)}</div>
+      <div class="fcard"><h4>Serviços que mais faturaram</h4>${barrasH(topSv)}</div>
+      <div class="fcard"><h4>Atendimentos por dia da semana</h4>${barrasV(sem, { fmt: v => String(Math.round(v)), alt: 150 })}</div>
+      <div class="fcard wide"><h4>Horários mais procurados</h4>${barrasV(porHora, { fmt: v => String(Math.round(v)), alt: 150 })}</div>
+    </div>
+    <details class="fcard tabela"><summary>Ver números em tabela</summary>
+      <table class="tbl2"><tr><th>Dia</th><th>Atendimentos</th><th>Faturamento</th></tr>${porDia.filter(d => d.v).map(d => `<tr><td>${d.l}</td><td>${conc.filter(a => a.data.endsWith("-" + d.l.slice(0, 2))).length}</td><td>${brl(d.v)}</td></tr>`).join("") || `<tr><td colspan="3">Nenhum atendimento concluído no mês.</td></tr>`}
+      <tr class="tot"><td>Total</td><td>${conc.length}</td><td>${brl(vConc)}</td></tr></table></details>`;
+  $("#fPrev").onclick = () => { const d = fromKey(fatMes + "-01"); d.setMonth(d.getMonth() - 1); fatMes = d.getFullYear() + "-" + pad(d.getMonth() + 1); renderFaturamento(); };
+  $("#fNext").onclick = () => { const d = fromKey(fatMes + "-01"); d.setMonth(d.getMonth() + 1); fatMes = d.getFullYear() + "-" + pad(d.getMonth() + 1); renderFaturamento(); };
+  $("#fatBody").querySelectorAll("[data-tip]").forEach(el => { el.onmouseenter = () => tip(el, el.dataset.tip); el.onmouseleave = semTip; el.onclick = () => tip(el, el.dataset.tip); });
 }
 
 /* ===================== serviços ===================== */

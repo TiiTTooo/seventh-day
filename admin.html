@@ -53,6 +53,7 @@
   <nav class="atabs wrap" id="tabs" role="tablist">
     <button data-tab="agenda" class="on">Agenda</button>
     <button data-tab="clientes">Clientes</button>
+    <button data-tab="faturamento" class="own">Faturamento</button>
     <button data-tab="servicos" class="own">Serviços e preços</button>
     <button data-tab="equipe" class="own">Equipe</button>
     <button data-tab="imagens" class="own">Imagens</button>
@@ -89,6 +90,11 @@
     <div id="cliList"></div>
   </section>
 
+  <section class="wrap tab hidden" id="tab-faturamento">
+    <div class="tabhead"><div><h2>Faturamento</h2><p class="hint">Visível só para o dono e o Master.</p></div></div>
+    <div id="fatBody"></div>
+  </section>
+
   <section class="wrap tab hidden" id="tab-servicos">
     <div class="tabhead"><div><h2>Serviços e preços</h2><p class="hint">Alterações aparecem no site na hora. Serviço desativado some do site, mas continua nos agendamentos antigos.</p></div>
       <button class="btn btn-brass" id="svcNew">Novo serviço</button></div>
@@ -118,6 +124,7 @@
 
 <div class="modal hidden" id="modal"><div class="box" id="modalBox"></div></div>
 <div class="toast hidden" id="toast"></div>
+<div class="ctip hidden" id="chartTip" role="tooltip"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js" integrity="sha384-uteMfOloLDGt042uDz+xHGF3ym63/WQ6rFq7murQRG8Ih7QrXGEGNtWd8688sb4O" crossorigin="anonymous"></script>
 <script src="js/config.js"></script>
