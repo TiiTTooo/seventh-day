@@ -50,3 +50,17 @@ body.conta,body.doc{background:var(--paper)}
 .conta-link{display:inline-flex;align-items:center;gap:8px}
 .conta-link .mini{width:26px;height:26px;border-radius:50%;overflow:hidden;display:inline-block}
 .conta-link .mini svg,.conta-link .mini img{width:100%;height:100%;display:block}
+/* avaliação */
+.stars{color:#C9962B;letter-spacing:1px}
+.ag>.st+button,.ag>.st+.avok{margin-left:8px}
+.ag{flex-wrap:wrap}
+.avok{background:none;border:0;padding:4px;font-size:15px;cursor:pointer}
+.avaliar-banner{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;background:#1A1516;color:#fff;border-radius:10px;padding:18px 22px;margin-bottom:20px}
+.avaliar-banner .hint{color:#cfc7c2;margin-top:4px}
+.rate{display:flex;gap:4px}
+.rate button{background:none;border:0;font-size:30px;line-height:1;color:#6d6264;cursor:pointer;padding:2px;transition:transform .12s,color .12s}
+.rate button:hover,.rate button:focus-visible{color:#E5B54A;transform:scale(1.12)}
+.rate.big{margin-top:14px}.rate.big button{font-size:38px;color:#d6d2cc}
+.rate.big button.on{color:#C9962B}
+textarea{width:100%;font:inherit;padding:10px;border:1px solid #ccc;border-radius:6px;resize:vertical}
+@media (prefers-reduced-motion:reduce){.rate button{transition:none}}

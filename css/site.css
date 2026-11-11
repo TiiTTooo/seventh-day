@@ -314,3 +314,14 @@ input,select,textarea{width:100%;font:inherit;padding:12px 14px;border:1.5px sol
 .equipe-mini{font-size:13px;opacity:.6;text-decoration:none}
 @media(max-width:760px){.equipe-mini{display:none}}
 .cta-conta{margin-top:22px;background:#fff;border:1px dashed #c9c6bf;border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:6px;align-items:center;font-size:15px}
+/* avaliações de clientes */
+.avals{background:var(--ink);color:var(--paper)}
+.avals h2{color:var(--paper)}
+.avresumo{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin:8px 0 28px;color:#cfc7c2}
+.avresumo b{font-family:var(--display);font-weight:900;font-size:72px;line-height:.9;color:var(--paper)}
+.avresumo .stars{font-size:22px}
+.avals .stars{color:#E5B54A;letter-spacing:2px}
+.avgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:18px}
+.avc{margin:0;border-top:2px solid rgba(255,255,255,.18);padding-top:16px}
+.avc blockquote{margin:10px 0 12px;font-size:17px;line-height:1.55;max-width:60ch}
+.avc figcaption{font-size:14px;color:#a99f9a}

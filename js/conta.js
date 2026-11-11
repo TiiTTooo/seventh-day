@@ -152,14 +152,56 @@ async function renderArea() {
   const futuro = a => a.data > hojeK || (a.data === hojeK && a.inicio >= hojeMin);
   const prox = (data || []).filter(a => a.status === "confirmado" && futuro(a)).reverse();
   const hist = (data || []).filter(a => !(a.status === "confirmado" && futuro(a)));
-  const linha = (a, cancelar) => { const d = fromKey(a.data); return `<div class="ag"><div><b>${WDL[d.getDay()]}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)} às ${fmtMin(a.inicio)}</b><div class="hint">${esc((a.servicos || []).map(s => s.nome).join(" + "))}${pro(a.profissional_id) ? " com " + esc(pro(a.profissional_id)) : ""} · ${money(a.total)}</div></div>${cancelar ? `<button class="linkbtn2" data-cancel="${a.id}">Cancelar</button>` : `<span class="st st-${a.status}">${({ concluido: "Atendido", faltou: "Faltou", cancelado: "Cancelado", confirmado: "Confirmado" })[a.status]}</span>`}</div>`; };
+  const { data: avs } = await sb.from("avaliacoes").select("agendamento_id,nota,comentario,pode_publicar");
+  const AV = {}; (avs || []).forEach(x => AV[x.agendamento_id] = x);
+  const limite = new Date(agora); limite.setDate(limite.getDate() - 60);
+  const limK = limite.getFullYear() + "-" + pad(limite.getMonth() + 1) + "-" + pad(limite.getDate());
+  const podeAvaliar = a => (a.status === "concluido" || a.status === "confirmado") && !futuro(a) && a.data >= limK;
+  const estrelas = n => `<span class="stars" aria-label="${n} de 5 estrelas">${"★".repeat(n)}${"☆".repeat(5 - n)}</span>`;
+  const acaoAval = a => AV[a.id] ? `<button class="avok" data-aval="${a.id}" title="Editar avaliação">${estrelas(AV[a.id].nota)}</button>` : podeAvaliar(a) ? `<button class="btn btn-ghost btn-sm" data-aval="${a.id}">Avaliar</button>` : "";
+  const linha = (a, cancelar) => { const d = fromKey(a.data); return `<div class="ag"><div><b>${WDL[d.getDay()]}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)} às ${fmtMin(a.inicio)}</b><div class="hint">${esc((a.servicos || []).map(s => s.nome).join(" + "))}${pro(a.profissional_id) ? " com " + esc(pro(a.profissional_id)) : ""} · ${money(a.total)}</div></div>${cancelar ? `<button class="linkbtn2" data-cancel="${a.id}">Cancelar</button>` : `<span class="st st-${a.status}">${({ concluido: "Atendido", faltou: "Faltou", cancelado: "Cancelado", confirmado: "Confirmado" })[a.status === "confirmado" && !futuro(a) ? "concluido" : a.status]}</span>${acaoAval(a)}`}</div>`; };
   $("#proximos").innerHTML = prox.length ? prox.map(a => linha(a, true)).join("") : `<p class="hint">Nenhum horário marcado. <a href="index.html#agendar">Agendar agora</a></p>`;
   $("#historico").innerHTML = hist.length ? hist.map(a => linha(a, false)).join("") : `<p class="hint">Seus atendimentos aparecem aqui.</p>`;
+  const ultimo = hist.find(a => podeAvaliar(a) && !AV[a.id] && a.data >= (() => { const d = new Date(agora); d.setDate(d.getDate() - 14); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); })());
+  const ban = $("#avBanner");
+  if (ultimo) {
+    const d = fromKey(ultimo.data);
+    ban.innerHTML = `<div><b>Como foi seu último atendimento?</b><div class="hint">${WDL[d.getDay()]}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)}: ${esc((ultimo.servicos || []).map(s => s.nome).join(" + "))}${pro(ultimo.profissional_id) ? " com " + esc(pro(ultimo.profissional_id)) : ""}</div></div>
+      <div class="rate" role="group" aria-label="Dar nota">${[1, 2, 3, 4, 5].map(n => `<button data-bn="${n}" aria-label="${n} estrela${n > 1 ? "s" : ""}">★</button>`).join("")}</div>`;
+    ban.classList.remove("hidden");
+    ban.querySelectorAll("[data-bn]").forEach(b => b.onclick = () => abrirAvaliacao(ultimo, null, +b.dataset.bn, pro));
+  } else ban.classList.add("hidden");
+  document.querySelectorAll("[data-aval]").forEach(b => b.onclick = () => abrirAvaliacao((data || []).find(a => a.id === b.dataset.aval), AV[b.dataset.aval], null, pro));
   $("#proximos").querySelectorAll("[data-cancel]").forEach(b => b.onclick = () => {
     openModal(`<h3>Cancelar este horário?</h3><p style="margin-top:8px">O horário fica livre para outra pessoa.</p><div class="cacts"><button class="btn btn-ghost" id="mN">Voltar</button><button class="btn btn-brass" id="mS">Cancelar horário</button></div>`);
     $("#mN").onclick = closeModal;
     $("#mS").onclick = async () => { const { error } = await sb.rpc("cancelar_meu_agendamento", { p_id: b.dataset.cancel }); closeModal(); if (error) return toast(error.message); toast("Horário cancelado."); renderArea(); };
   });
+}
+function abrirAvaliacao(a, atual, notaIni, pro) {
+  if (!a) return;
+  const d = fromKey(a.data); let nota = notaIni || atual?.nota || 0;
+  openModal(`<h3>Avaliar atendimento</h3>
+    <p class="hint">${WDL[d.getDay()]}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)} · ${esc((a.servicos || []).map(s => s.nome).join(" + "))}${pro(a.profissional_id) ? " com " + esc(pro(a.profissional_id)) : ""}</p>
+    <div class="rate big" role="radiogroup" aria-label="Nota de 1 a 5">${[1, 2, 3, 4, 5].map(n => `<button type="button" role="radio" data-n="${n}" aria-label="${n} estrela${n > 1 ? "s" : ""}">★</button>`).join("")}</div>
+    <p class="hint small" id="rTxt"></p>
+    <label for="rCom" style="margin-top:12px">Comentário (opcional)</label>
+    <textarea id="rCom" maxlength="500" rows="4" placeholder="O que você achou do corte, do atendimento, do ambiente?">${esc(atual?.comentario || "")}</textarea>
+    <label class="chk"><input type="checkbox" id="rPub" ${atual?.pode_publicar ? "checked" : ""}> Pode mostrar meu comentário no site, com meu primeiro nome</label>
+    <div class="cacts"><button class="btn btn-ghost" id="rN">Voltar</button><button class="btn btn-brass" id="rS">Enviar avaliação</button></div>`);
+  const txt = ["", "Ruim", "Abaixo do esperado", "Ok", "Bom", "Excelente"];
+  const pinta = () => { $("#modalBox").querySelectorAll("[data-n]").forEach(b => { const on = +b.dataset.n <= nota; b.classList.toggle("on", on); b.setAttribute("aria-checked", String(+b.dataset.n === nota)); }); $("#rTxt").textContent = nota ? txt[nota] : "Toque nas estrelas para dar a nota."; };
+  $("#modalBox").querySelectorAll("[data-n]").forEach(b => b.onclick = () => { nota = +b.dataset.n; pinta(); });
+  pinta();
+  $("#rN").onclick = closeModal;
+  $("#rS").onclick = async () => {
+    if (!nota) return toast("Escolha de 1 a 5 estrelas.");
+    $("#rS").disabled = true;
+    const { error } = await sb.rpc("avaliar_atendimento", { p_id: a.id, p_nota: nota, p_comentario: $("#rCom").value, p_publicar: $("#rPub").checked });
+    $("#rS").disabled = false;
+    if (error) return toast(error.message);
+    closeModal(); toast("Obrigado pela avaliação!"); renderArea();
+  };
 }
 $("#editar").onclick = abrirCadastro;
 $("#excluir").onclick = () => {

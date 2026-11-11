@@ -121,7 +121,7 @@ document.querySelectorAll(".atabs button").forEach(b => b.onclick = () => abrirA
 function abrirAba(t) {
   document.querySelectorAll(".atabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
   document.querySelectorAll(".tab").forEach(s => s.classList.toggle("hidden", s.id !== "tab-" + t));
-  ({ agenda: renderAgenda, clientes: renderClientes, faturamento: renderFaturamento, servicos: renderServicos, equipe: renderEquipe, imagens: renderImagens, config: renderConfig })[t]();
+  ({ agenda: renderAgenda, clientes: renderClientes, faturamento: renderFaturamento, avaliacoes: renderAvaliacoes, servicos: renderServicos, equipe: renderEquipe, imagens: renderImagens, config: renderConfig })[t]();
 }
 
 /* ===================== agenda ===================== */
@@ -129,7 +129,31 @@ let dia = dkey(new Date()), AG = [], BL = [], novos = new Set();
 const profs = () => EQUIPE.filter(p => p.ativo && p.atende && (DONO || p.id === EU.id));
 const shiftDay = n => { const d = fromKey(dia); d.setDate(d.getDate() + n); dia = dkey(d); renderAgenda(); };
 $("#todayBtn").onclick = () => { dia = dkey(new Date()); calMes = null; renderAgenda(); };
-let calMes = null, MES = [];
+let calMes = null, MES = [], AVS = {};
+const agoraSP = () => { const n = new Date(); return { k: dkey(n), m: n.getHours() * 60 + n.getMinutes() }; };
+const passou = a => { const n = agoraSP(); return a.data < n.k || (a.data === n.k && a.inicio + a.duracao <= n.m); };
+async function mudarStatus(ids, st) {
+  const { error } = await sb.from("agendamentos").update({ status: st }).in("id", ids);
+  if (error) return fail(error);
+  toast(st === "concluido" ? (ids.length > 1 ? `${ids.length} atendimentos confirmados.` : "Atendimento confirmado.") : "Marcado como falta.");
+  renderAgenda();
+}
+/* Horários que já passaram e ninguém marcou: últimos 14 dias */
+async function renderPendentes() {
+  const box = $("#pendentes"), n = agoraSP(), ini = new Date(); ini.setDate(ini.getDate() - 14);
+  let q = sb.from("agendamentos").select("id,data,inicio,duracao,cliente_nome,profissional_id,servicos").eq("status", "confirmado").gte("data", dkey(ini)).lte("data", n.k).order("data").order("inicio");
+  if (!DONO) q = q.eq("profissional_id", EU.id);
+  const { data } = await q;
+  const pend = (data || []).filter(passou);
+  if (!pend.length) { box.classList.add("hidden"); return; }
+  const auto = CFG.auto_concluir ? ` Se ninguém marcar, eles viram "Atendido" sozinhos ${CFG.auto_concluir_horas}h depois do fim.` : "";
+  box.classList.remove("hidden");
+  box.innerHTML = `<div><b>${pend.length} atendimento(s) esperando confirmação.</b><span class="hint">Marque as faltas; o resto pode ser confirmado de uma vez.${auto}</span></div>
+    <div class="pl">${pend.slice(0, 8).map(a => { const d = fromKey(a.data), p = EQUIPE.find(x => x.id === a.profissional_id); return `<div class="pi"><span>${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${fmtMin(a.inicio)} · ${esc(a.cliente_nome)}${DONO && p ? " · " + esc(p.nome.split(" ")[0]) : ""}</span><button class="btn btn-sm qok" data-pq="concluido" data-id="${a.id}">Atendido</button><button class="btn btn-sm qno" data-pq="faltou" data-id="${a.id}">Faltou</button></div>`; }).join("")}${pend.length > 8 ? `<div class="hint">E mais ${pend.length - 8}.</div>` : ""}</div>
+    <button class="btn btn-dark btn-sm" id="pendTodos">Confirmar todos os ${pend.length} como atendidos</button>`;
+  box.querySelectorAll("[data-pq]").forEach(b => b.onclick = () => mudarStatus([b.dataset.id], b.dataset.pq));
+  $("#pendTodos").onclick = () => confirmar(`Confirmar ${pend.length} atendimento(s)?`, "Todos entram no faturamento como atendidos. Marque antes quem faltou.", "Confirmar todos", () => mudarStatus(pend.map(a => a.id), "concluido"));
+}
 const MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
 async function renderMes() {
   const base = calMes ? fromKey(calMes + "-01") : fromKey(dia); base.setDate(1);
@@ -170,6 +194,8 @@ async function renderAgenda() {
   ]);
   if (a.error) return fail(a.error, "Erro ao carregar a agenda.");
   AG = a.data || []; BL = b.data || [];
+  AVS = {};
+  if (AG.length) { const { data: av } = await sb.from("avaliacoes").select("agendamento_id,nota").in("agendamento_id", AG.map(x => x.id)); (av || []).forEach(x => AVS[x.agendamento_id] = x); }
   const act = AG.filter(x => x.status !== "cancelado");
   $("#stats").innerHTML = [["Agendamentos", act.length], ["A atender", AG.filter(x => x.status === "confirmado").length], ["Atendidos", AG.filter(x => x.status === "concluido").length], ["Faltas", AG.filter(x => x.status === "faltou").length]]
     .map(([l, v]) => `<div class="stat"><small>${l}</small><b>${v}</b></div>`).join("");
@@ -180,6 +206,9 @@ async function renderAgenda() {
         <div class="t">${fmtMin(v.inicio)}–${fmtMin(v.inicio + v.duracao)} · ${esc(v.cliente_nome)}</div>
         <div class="s">${esc((v.servicos || []).map(s => s.nome).join(" + "))} · ${money(v.total)}${v.origem === "balcao" ? " · encaixe" : ""}</div>
         ${v.cliente_tel ? `<div class="s">${fmtTel(v.cliente_tel)}</div>` : ""}
+        ${v.status === "confirmado" && passou(v) ? `<div class="quick"><span>Já passou do horário:</span><button class="btn btn-sm qok" data-q="concluido" data-id="${v.id}">Atendido</button><button class="btn btn-sm qno" data-q="faltou" data-id="${v.id}">Faltou</button></div>` : ""}
+        ${v.concluido_auto ? `<div class="s"><span class="tag">Confirmado automaticamente</span></div>` : ""}
+        ${AVS[v.id] ? `<div class="s"><span class="stars" aria-label="${AVS[v.id].nota} de 5">${"★".repeat(AVS[v.id].nota)}${"☆".repeat(5 - AVS[v.id].nota)}</span> avaliado pelo cliente</div>` : ""}
         <div class="row">
           <select data-st="${v.id}" aria-label="Situação">${[["confirmado", "Confirmado"], ["concluido", "Concluído"], ["faltou", "Faltou"], ["cancelado", "Cancelado"]].map(([val, l]) => `<option value="${val}" ${v.status === val ? "selected" : ""}>${l}</option>`).join("")}</select>
           ${v.cliente_tel ? `<a target="_blank" rel="noopener" href="${waLink("55" + v.cliente_tel, `Olá ${v.cliente_nome}! Lembrete do seu horário na ${CFG.nome}: ${WDL[d.getDay()].toLowerCase()}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)} às ${fmtMin(v.inicio)} com ${p.nome.split(" ")[0]}. Até lá!`)}">Lembrar no WhatsApp</a>` : ""}
@@ -189,6 +218,8 @@ async function renderAgenda() {
       <div class="appt block"><div class="t">${fmtMin(v.inicio)}–${fmtMin(v.fim)} · Bloqueado</div><div class="s">${esc(v.motivo || "Sem motivo")}${v.profissional_id === null ? " · salão todo" : ""}</div>
       ${(DONO || v.profissional_id === EU.id) ? `<div class="row"><button class="linkbtn" data-unb="${v.id}">Liberar horário</button></div>` : ""}</div>`).join("") : `<div class="empty">Agenda livre.</div>`}</div>`;
   }).join("") || `<div class="empty">Nenhum profissional atende pela agenda.</div>`;
+  $("#cols").querySelectorAll("[data-q]").forEach(b => b.onclick = () => mudarStatus([b.dataset.id], b.dataset.q));
+  renderPendentes();
   $("#cols").querySelectorAll("[data-st]").forEach(s => s.onchange = async () => { const { error } = await sb.from("agendamentos").update({ status: s.value }).eq("id", s.dataset.st); if (error) fail(error); else { toast("Situação atualizada."); renderAgenda(); } });
   $("#cols").querySelectorAll("[data-unb]").forEach(b => b.onclick = async () => { const { error } = await sb.from("bloqueios").delete().eq("id", b.dataset.unb); if (error) fail(error); else { toast("Horário liberado."); renderAgenda(); } });
   $("#cols").querySelectorAll("[data-del]").forEach(b => b.onclick = () => confirmar("Apagar este agendamento?", "Ele some da agenda e do faturamento. Para manter o histórico, prefira marcar como Cancelado.", "Apagar", async () => { const { error } = await sb.from("agendamentos").delete().eq("id", b.dataset.del); if (error) fail(error); else { toast("Agendamento apagado."); renderAgenda(); } }));
@@ -657,6 +688,11 @@ async function renderConfig() {
         <div>${f("cDias", "Agenda aberta por (dias)", CFG.dias_abertos, "number")}</div>
       </div>
     </div>
+    <div class="card"><h3>Confirmação dos atendimentos</h3>
+      <label class="sw"><input type="checkbox" id="cAuto" ${CFG.auto_concluir ? "checked" : ""}> Confirmar sozinho os horários que ninguém marcou</label>
+      <p class="hint">O horário vira "Atendido" algumas horas depois do fim. A equipe só precisa marcar quem faltou. Desligado, tudo fica como "Confirmado" até alguém mexer, e o faturamento só conta o que foi marcado.</p>
+      ${f("cAutoH", "Horas depois do fim do atendimento", CFG.auto_concluir_horas, "number")}
+    </div>
     <div class="card"><h3>Contato e endereço</h3>
       ${f("cWa", "WhatsApp (só números, com 55 e DDD)", CFG.whatsapp)}
       ${f("cWaT", "WhatsApp como aparece no site", CFG.whatsapp_txt)}
@@ -673,8 +709,40 @@ async function renderConfig() {
     $("#cfgForm").querySelectorAll(".hrow").forEach(r => { const on = r.querySelector("[data-open]").checked, a = r.querySelector("[data-a]").value, b = r.querySelector("[data-f]").value; if (on && !(toMin(b) > toMin(a))) bad = true; horarios[r.dataset.d] = on ? [a, b] : null; });
     if (bad) return toast("Em algum dia o fechamento está antes da abertura.");
     const upd = { horarios, intervalo: +$("#cInt").value, antecedencia: +$("#cAnt").value, dias_abertos: +$("#cDias").value,
-      whatsapp: $("#cWa").value.replace(/\D/g, ""), whatsapp_txt: $("#cWaT").value.trim(), telefone: $("#cTel").value.trim(), instagram: $("#cIg").value.replace(/^@/, "").trim(), endereco: $("#cEnd").value.trim(), maps_query: $("#cMap").value.trim(), updated_at: new Date().toISOString() };
+      whatsapp: $("#cWa").value.replace(/\D/g, ""), whatsapp_txt: $("#cWaT").value.trim(), telefone: $("#cTel").value.trim(), instagram: $("#cIg").value.replace(/^@/, "").trim(), endereco: $("#cEnd").value.trim(), maps_query: $("#cMap").value.trim(), auto_concluir: $("#cAuto").checked, auto_concluir_horas: Math.min(48, Math.max(1, +$("#cAutoH").value || 3)), updated_at: new Date().toISOString() };
     const { error } = await sb.from("config").update(upd).eq("id", 1); if (error) return fail(error);
     CFG = { ...CFG, ...upd }; toast("Configurações salvas. O site já mostra os novos horários.");
   };
+}
+
+
+/* ===================== avaliações ===================== */
+let avFiltro = "todas";
+async function renderAvaliacoes() {
+  const body = $("#avBody");
+  let q = sb.from("avaliacoes").select("*, agendamentos(cliente_nome,data,inicio,servicos)").order("criado", { ascending: false }).limit(300);
+  if (!DONO) q = q.eq("profissional_id", EU.id);
+  const { data, error } = await q;
+  if (error) return fail(error, "Erro ao carregar as avaliações.");
+  const L = data || [], media = L.length ? (L.reduce((t, a) => t + a.nota, 0) / L.length) : 0;
+  const pendMod = L.filter(a => a.pode_publicar && !a.aprovada && a.comentario);
+  const dist = [5, 4, 3, 2, 1].map(n => ({ n, c: L.filter(a => a.nota === n).length }));
+  const vis = L.filter(a => avFiltro === "todas" || (avFiltro === "moderar" && a.pode_publicar && !a.aprovada && a.comentario) || (avFiltro === "baixas" && a.nota <= 3));
+  body.innerHTML = !L.length ? `<div class="empty">Nenhuma avaliação ainda. Clientes com conta no site podem avaliar o atendimento depois do horário, pela página Minha conta.</div>` : `
+    <div class="avtop">
+      <div class="card avmed"><b>${media.toFixed(1).replace(".", ",")}</b><span class="stars">${"★".repeat(Math.round(media))}${"☆".repeat(5 - Math.round(media))}</span><small>${L.length} avaliação(ões)</small></div>
+      <div class="card avdist">${barrasH(dist.map(d => ({ l: d.n + " estrela" + (d.n > 1 ? "s" : ""), v: d.c, tip: `${d.c} avaliação(ões) com ${d.n}` })), v => String(v))}</div>
+    </div>
+    <div class="avfil">${[["todas", "Todas"], ...(DONO ? [["moderar", `Para aprovar (${pendMod.length})`]] : []), ["baixas", "Notas até 3"]].map(([k, l]) => `<button class="chip ${avFiltro === k ? "on" : ""}" data-f="${k}">${l}</button>`).join("")}</div>
+    <div class="avlist">${vis.map(a => { const ag = a.agendamentos || {}, d = ag.data ? fromKey(ag.data) : null, p = EQUIPE.find(x => x.id === a.profissional_id); return `
+      <div class="card av">
+        <div class="avh"><span class="stars">${"★".repeat(a.nota)}${"☆".repeat(5 - a.nota)}</span><b>${esc(ag.cliente_nome || "Cliente")}</b><span class="hint">${d ? pad(d.getDate()) + "/" + pad(d.getMonth() + 1) : ""} · ${esc((ag.servicos || []).map(s => s.nome).join(" + "))}${p ? " · " + esc(p.nome.split(" ")[0]) : ""}</span></div>
+        ${a.comentario ? `<p>${esc(a.comentario)}</p>` : `<p class="hint">Sem comentário.</p>`}
+        <div class="row">${a.aprovada ? `<span class="tag ok">Aparece no site</span>` : a.pode_publicar && a.comentario ? `<span class="tag">Cliente autorizou mostrar no site</span>` : `<span class="tag">Só para a equipe</span>`}
+          ${DONO && a.pode_publicar && a.comentario ? `<button class="linkbtn" style="color:var(--ink)" data-apr="${a.agendamento_id}" data-v="${a.aprovada ? 0 : 1}">${a.aprovada ? "Tirar do site" : "Mostrar no site"}</button>` : ""}
+          ${DONO ? `<button class="linkbtn" data-avdel="${a.agendamento_id}">Apagar</button>` : ""}</div>
+      </div>`; }).join("") || `<div class="empty">Nada neste filtro.</div>`}</div>`;
+  body.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { avFiltro = b.dataset.f; renderAvaliacoes(); });
+  body.querySelectorAll("[data-apr]").forEach(b => b.onclick = async () => { const { error } = await sb.from("avaliacoes").update({ aprovada: b.dataset.v === "1" }).eq("agendamento_id", b.dataset.apr); if (error) fail(error); else { toast(b.dataset.v === "1" ? "A avaliação já aparece no site." : "Avaliação retirada do site."); renderAvaliacoes(); } });
+  body.querySelectorAll("[data-avdel]").forEach(b => b.onclick = () => confirmar("Apagar esta avaliação?", "Ela sai do painel e do site, e a nota deixa de contar na média.", "Apagar", async () => { const { error } = await sb.from("avaliacoes").delete().eq("agendamento_id", b.dataset.avdel); if (error) fail(error); else { toast("Avaliação apagada."); renderAvaliacoes(); } }));
 }

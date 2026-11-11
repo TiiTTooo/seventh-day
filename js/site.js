@@ -333,7 +333,15 @@ $("#bandBg").style.backgroundImage = `url(${BG.maquinas})`;
 $("#infoBg").style.backgroundImage = `url(${BG.cadeiras})`;
 setupReveal();
 carregarCliente();
-carregar().then(() => { renderSite(); if (location.hash === "#agendar") openBooking(); }).catch(err => {
+async function carregarAvaliacoes() {
+  const { data, error } = await sb.rpc("avaliacoes_publicas");
+  if (error || !data || !data.length) return;
+  const m = Number(data[0].media), tot = Number(data[0].total);
+  $("#avResumo").innerHTML = `<b>${m.toFixed(1).replace(".", ",")}</b><span class="stars" aria-hidden="true">${"★".repeat(Math.round(m))}${"☆".repeat(5 - Math.round(m))}</span><span>média de ${tot} avaliação${tot > 1 ? "ões" : ""} de clientes atendidos</span>`;
+  $("#avGrid").innerHTML = data.slice(0, 6).map(a => `<figure class="avc"><span class="stars" aria-label="${a.nota} de 5 estrelas">${"★".repeat(a.nota)}${"☆".repeat(5 - a.nota)}</span><blockquote>${esc(a.comentario)}</blockquote><figcaption>${esc(a.nome)}${a.profissional ? `, atendido por ${esc(a.profissional)}` : ""}</figcaption></figure>`).join("");
+  $("#avaliacoes").classList.remove("hidden");
+}
+carregar().then(() => { renderSite(); carregarAvaliacoes(); if (location.hash === "#agendar") openBooking(); }).catch(err => {
   console.error(err);
   $("#menu").innerHTML = `<div class="err-box">Não foi possível carregar os serviços agora. Agende pelo WhatsApp (11) 98386-7901.</div>`;
 });

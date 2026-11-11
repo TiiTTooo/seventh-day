@@ -54,6 +54,7 @@
     <button data-tab="agenda" class="on">Agenda</button>
     <button data-tab="clientes">Clientes</button>
     <button data-tab="faturamento" class="own">Faturamento</button>
+    <button data-tab="avaliacoes">Avaliações</button>
     <button data-tab="servicos" class="own">Serviços e preços</button>
     <button data-tab="equipe" class="own">Equipe</button>
     <button data-tab="imagens" class="own">Imagens</button>
@@ -77,6 +78,7 @@
             <button class="btn btn-dark btn-sm" id="copyDay">Copiar agenda do dia</button>
           </div>
         </div>
+        <div class="pend hidden" id="pendentes"></div>
         <div class="stats" id="stats"></div>
         <div class="cols" id="cols"></div>
       </div>
@@ -93,6 +95,11 @@
   <section class="wrap tab hidden" id="tab-faturamento">
     <div class="tabhead"><div><h2>Faturamento</h2><p class="hint">Visível só para o dono e o Master.</p></div></div>
     <div id="fatBody"></div>
+  </section>
+
+  <section class="wrap tab hidden" id="tab-avaliacoes">
+    <div class="tabhead"><div><h2>Avaliações</h2><p class="hint">Notas e comentários que os clientes deixam depois do atendimento. Só aparecem no site os que o cliente autorizou e o dono aprovou.</p></div></div>
+    <div id="avBody"></div>
   </section>
 
   <section class="wrap tab hidden" id="tab-servicos">

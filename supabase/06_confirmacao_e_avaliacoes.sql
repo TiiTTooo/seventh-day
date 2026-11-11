@@ -1,0 +1,10 @@
+-- 06: conclusão automática dos atendimentos e avaliações dos clientes
+-- (mesmo conteúdo da migration "conclusao_automatica_e_avaliacoes" aplicada no projeto)
+-- veja a migration no Supabase; resumo:
+-- config.auto_concluir (bool, padrão true), config.auto_concluir_horas (1-48, padrão 3)
+-- agendamentos.concluido_auto; função concluir_automatico(); pg_cron 'seventhday-concluir' a cada 30 min
+-- trigger agend_status_manual: mudança manual de status zera concluido_auto
+-- tabela avaliacoes (agendamento_id PK, cliente_id, profissional_id, nota 1-5, comentario <=500, pode_publicar, aprovada, resposta, criado)
+-- RLS: cliente lê as suas; equipe lê todas; dono aprova/apaga
+-- RPC avaliar_atendimento(p_id, p_nota, p_comentario, p_publicar) -> só o dono do agendamento, depois do início, até 60 dias; confirma o atendimento
+-- RPC avaliacoes_publicas() -> aprovadas e autorizadas, só primeiro nome, com média e total
