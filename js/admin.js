@@ -395,7 +395,7 @@ function barrasV(itens, { alt = 180, fmt = brl, destaque = null } = {}) {
 }
 function barrasH(itens, fmt = brl) {
   const max = Math.max(1, ...itens.map(i => i.v));
-  return itens.length ? `<div class="hchart">${itens.map(i => `<div class="hrow" data-tip="${esc(i.tip || (i.l + ": " + fmt(i.v)))}"><span class="hl">${esc(i.l)}</span><div class="htrack"><div class="hbar" style="width:${Math.max(1.5, (i.v / max) * 100)}%"></div></div><b>${fmt(i.v)}</b></div>`).join("")}</div>` : `<p class="hint">Sem dados no período.</p>`;
+  return itens.length ? `<div class="hchart">${itens.map(i => `<div class="hbrow" data-tip="${esc(i.tip || (i.l + ": " + fmt(i.v)))}"><span class="hl">${esc(i.l)}</span><div class="htrack"><div class="hbar" style="width:${Math.max(1.5, (i.v / max) * 100)}%"></div></div><b>${fmt(i.v)}</b></div>`).join("")}</div>` : `<p class="hint">Sem dados no período.</p>`;
 }
 async function renderFaturamento() {
   if (!DONO) return abrirAba("agenda");

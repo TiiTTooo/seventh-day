@@ -179,12 +179,12 @@ body.adm{background:#E7E6E3;min-height:100vh}
 .vlabels{display:flex;margin-left:58px;margin-top:6px}
 .vlabels span{text-align:center;font-size:11px;color:#5b6a6d;text-transform:capitalize}
 .hchart{display:flex;flex-direction:column;gap:8px}
-.hrow{display:grid;grid-template-columns:minmax(90px,38%) 1fr auto;gap:10px;align-items:center;font-size:14px;cursor:default}
-.hrow .hl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hbrow{display:grid;grid-template-columns:minmax(90px,38%) 1fr auto;gap:10px;align-items:center;font-size:14px;cursor:default}
+.hbrow .hl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .htrack{height:12px}
 .hbar{height:100%;background:#D3302F;border-radius:0 4px 4px 0}
-.hrow:hover .hbar{filter:brightness(.85)}
-.hrow b{font-variant-numeric:tabular-nums;font-size:14px}
+.hbrow:hover .hbar{filter:brightness(.85)}
+.hbrow b{font-variant-numeric:tabular-nums;font-size:14px}
 .ctip{position:absolute;z-index:90;background:#1A1516;color:#fff;font-size:13px;padding:6px 10px;border-radius:6px;pointer-events:none;max-width:260px}
 .tabela{margin-top:16px}.tabela summary{cursor:pointer;font-weight:600}
 .tbl2{width:100%;border-collapse:collapse;margin-top:10px;font-size:14px}
