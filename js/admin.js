@@ -123,7 +123,7 @@ document.querySelectorAll(".atabs button").forEach(b => b.onclick = () => abrirA
 function abrirAba(t) {
   document.querySelectorAll(".atabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
   document.querySelectorAll(".tab").forEach(s => s.classList.toggle("hidden", s.id !== "tab-" + t));
-  ({ agenda: renderAgenda, clientes: renderClientes, faturamento: renderFaturamento, avaliacoes: renderAvaliacoes, servicos: renderServicos, equipe: renderEquipe, imagens: renderImagens, config: renderConfig })[t]();
+  ({ agenda: renderAgenda, clientes: renderClientes, faturamento: renderFaturamento, avaliacoes: renderAvaliacoes, agente: renderAgente, servicos: renderServicos, equipe: renderEquipe, imagens: renderImagens, config: renderConfig })[t]();
 }
 
 /* ===================== agenda ===================== */
@@ -161,7 +161,7 @@ async function renderMes() {
   const base = calMes ? fromKey(calMes + "-01") : fromKey(dia); base.setDate(1);
   calMes = base.getFullYear() + "-" + pad(base.getMonth() + 1);
   const fim = new Date(base.getFullYear(), base.getMonth() + 1, 0);
-  const { data } = await sb.from("agendamentos").select("data,status,total,profissional_id").gte("data", dkey(base)).lte("data", dkey(fim));
+  const { data } = await sb.from("agendamentos").select("data,status,total,profissional_id").eq("teste", false).gte("data", dkey(base)).lte("data", dkey(fim));
   MES = data || [];
   const porDia = {}; MES.filter(a => a.status !== "cancelado").forEach(a => porDia[a.data] = (porDia[a.data] || 0) + 1);
   const hoje = dkey(spNow()), cells = [];
@@ -206,7 +206,7 @@ async function renderAgenda() {
     return `<div class="col"><h4>${avatar(p)}${esc(p.nome)}</h4>${items.length ? items.map(({ k, v }) => k === "a" ? `
       <div class="appt st-${v.status} ${novos.has(v.id) ? "novo" : ""}">
         <div class="t">${fmtMin(v.inicio)}–${fmtMin(v.inicio + v.duracao)} · ${esc(v.cliente_nome)}</div>
-        <div class="s">${esc((v.servicos || []).map(s => s.nome).join(" + "))} ${DONO ? " · " + money(v.total) : ""}${v.origem === "balcao" ? " · encaixe" : ""}</div>
+        <div class="s">${esc((v.servicos || []).map(s => s.nome).join(" + "))} ${DONO ? " · " + money(v.total) : ""}${v.origem === "balcao" ? " · encaixe" : v.origem === "whatsapp" ? " · WhatsApp" : ""}${v.teste ? " · <b>teste</b>" : ""}</div>
         ${v.cliente_tel ? `<div class="s">${fmtTel(v.cliente_tel)}</div>` : ""}
         ${v.status === "confirmado" && passou(v) ? `<div class="quick"><span>Já passou do horário:</span><button class="btn btn-sm qok" data-q="concluido" data-id="${v.id}">Atendido</button><button class="btn btn-sm qno" data-q="faltou" data-id="${v.id}">Faltou</button></div>` : ""}
         ${v.concluido_auto ? `<div class="s"><span class="tag">Confirmado automaticamente</span></div>` : ""}
@@ -436,7 +436,7 @@ async function renderFaturamento() {
   fatMes = base.getFullYear() + "-" + pad(base.getMonth() + 1);
   const ini6 = new Date(base.getFullYear(), base.getMonth() - 5, 1), fim = new Date(base.getFullYear(), base.getMonth() + 1, 0);
   const ant = new Date(base.getFullYear(), base.getMonth() - 1, 1);
-  const { data, error } = await sb.from("agendamentos").select("data,inicio,status,total,servicos,profissional_id,origem,cliente_tel,cliente_nome").gte("data", dkey(ini6)).lte("data", dkey(fim));
+  const { data, error } = await sb.from("agendamentos").select("data,inicio,status,total,servicos,profissional_id,origem,cliente_tel,cliente_nome").eq("teste", false).gte("data", dkey(ini6)).lte("data", dkey(fim));
   if (error) return fail(error, "Erro ao carregar o faturamento.");
   const T = data || [], noMes = T.filter(a => a.data.startsWith(fatMes)), noAnt = T.filter(a => a.data.startsWith(ant.getFullYear() + "-" + pad(ant.getMonth() + 1)));
   const conc = noMes.filter(a => a.status === "concluido"), conf = noMes.filter(a => a.status === "confirmado"), falt = noMes.filter(a => a.status === "faltou"), canc = noMes.filter(a => a.status === "cancelado");
@@ -748,3 +748,79 @@ async function renderAvaliacoes() {
   body.querySelectorAll("[data-apr]").forEach(b => b.onclick = async () => { const { error } = await sb.from("avaliacoes").update({ aprovada: b.dataset.v === "1" }).eq("agendamento_id", b.dataset.apr); if (error) fail(error); else { toast(b.dataset.v === "1" ? "A avaliação já aparece no site." : "Avaliação retirada do site."); renderAvaliacoes(); } });
   body.querySelectorAll("[data-avdel]").forEach(b => b.onclick = () => confirmar("Apagar esta avaliação?", "Ela sai do painel e do site, e a nota deixa de contar na média.", "Apagar", async () => { const { error } = await sb.from("avaliacoes").delete().eq("agendamento_id", b.dataset.avdel); if (error) fail(error); else { toast("Avaliação apagada."); renderAvaliacoes(); } }));
 }
+
+
+/* ===================== agente WhatsApp (simulador) ===================== */
+let agConv = null;
+const agFmtHora = iso => { const d = new Date(iso); return pad(d.getHours()) + ":" + pad(d.getMinutes()); };
+const agWa = t => esc(t).replace(/\*([^*\n]+)\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
+function agTelAtual() { return $("#agTel").value.replace(/\D/g, ""); }
+async function renderAgente() {
+  if (!$("#agTel").value) { $("#agTel").value = "11900000001"; $("#agNome").value = "Cliente Teste"; }
+  $("#agTelTopo").textContent = $("#agTel").value;
+  $("#agNomeTopo").textContent = $("#agNome").value || "Cliente de teste";
+  await agListar();
+  await agCarregar();
+}
+async function agListar() {
+  const { data, error } = await sb.from("conversas").select("id,canal,telefone,nome,humano_ate,motivo_humano,ultima_msg").order("ultima_msg", { ascending: false }).limit(50);
+  if (error) { $("#agConvs").innerHTML = `<p class="hint">${esc(error.message)}</p>`; return; }
+  const agora = new Date();
+  $("#agConvs").innerHTML = !data.length ? `<p class="hint">Nenhuma conversa ainda. Mande a primeira mensagem ao lado.</p>` : data.map(c => {
+    const hum = c.humano_ate && new Date(c.humano_ate) > agora;
+    return `<button class="agconv ${agConv && agConv.id === c.id ? "on" : ""}" data-c="${c.id}" data-tel="${esc(c.telefone)}" data-nome="${esc(c.nome || "")}">
+      <b>${esc(c.nome || c.telefone)}</b><span>${c.canal === "simulador" ? "teste" : "WhatsApp"} · ${agFmtHora(c.ultima_msg)}</span>${hum ? `<span class="tag">Com a equipe</span>` : ""}</button>`;
+  }).join("");
+  $("#agConvs").querySelectorAll("[data-c]").forEach(b => b.onclick = () => { $("#agTel").value = b.dataset.tel; $("#agNome").value = b.dataset.nome; renderAgente(); });
+}
+async function agCarregar() {
+  const tel = agTelAtual();
+  const { data: c } = await sb.from("conversas").select("*").eq("canal", "simulador").eq("telefone", tel).maybeSingle();
+  agConv = c || null;
+  const box = $("#agMsgs");
+  if (!c) { box.innerHTML = `<div class="agvazio">Escreva como um cliente: "oi, quanto é o corte?", "tem horário amanhã à tarde?", "quero cancelar meu horário".</div>`; $("#agHumano").classList.add("hidden"); return; }
+  const { data: ms } = await sb.from("mensagens").select("papel,texto,dados,criado").eq("conversa_id", c.id).order("criado").limit(200);
+  box.innerHTML = (ms || []).map(agBolha).join("");
+  box.scrollTop = box.scrollHeight;
+  const hum = c.humano_ate && new Date(c.humano_ate) > new Date();
+  $("#agHumano").classList.toggle("hidden", !hum);
+  if (hum) {
+    $("#agHumano").innerHTML = `<span>O agente passou esta conversa para a equipe${c.motivo_humano ? ": " + esc(c.motivo_humano) : ""}. Ele não responde até alguém devolver.</span><button class="btn btn-sm" id="agDevolver">Devolver para o agente</button>`;
+    $("#agDevolver").onclick = async () => { const { error } = await sb.from("conversas").update({ humano_ate: null, motivo_humano: null }).eq("id", c.id); if (error) return fail(error); toast("O agente voltou a responder."); agCarregar(); agListar(); };
+  }
+}
+function agBolha(m) {
+  const lado = m.papel === "cliente" ? "cli" : "bot";
+  const fer = (m.dados?.acoes || []).filter(a => a.tipo === "ferramenta");
+  const det = fer.length ? `<details class="agdet"><summary>${fer.length} consulta(s) à agenda</summary>${fer.map(a => `<div><b>${esc(a.nome)}</b> ${esc(JSON.stringify(a.entrada))}<br><span>${esc(a.saida)}</span></div>`).join("")}</details>` : "";
+  return `<div class="agb ${lado}"><div>${agWa(m.texto)}</div><time>${agFmtHora(m.criado)}</time>${det}</div>`;
+}
+$("#agForm").onsubmit = async ev => {
+  ev.preventDefault();
+  const texto = $("#agTexto").value.trim(); if (!texto) return;
+  const tel = agTelAtual(); if (tel.length < 10 || tel.length > 11) return toast("Coloque um WhatsApp com DDD para o cliente de teste.");
+  const box = $("#agMsgs");
+  if (box.querySelector(".agvazio")) box.innerHTML = "";
+  box.insertAdjacentHTML("beforeend", agBolha({ papel: "cliente", texto, criado: new Date().toISOString() }) + `<div class="agb bot digitando" id="agDig"><div><i></i><i></i><i></i></div></div>`);
+  box.scrollTop = box.scrollHeight;
+  $("#agTexto").value = ""; $("#agEnviar").disabled = true;
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const r = await fetch(SD_CONFIG.url + "/functions/v1/agente", {
+      method: "POST",
+      headers: { "content-type": "application/json", apikey: SD_CONFIG.key, authorization: "Bearer " + session.access_token },
+      body: JSON.stringify({ telefone: tel, nome: $("#agNome").value.trim(), texto }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.erro || "Falha ao falar com o agente (" + r.status + ").");
+    if (j.acoes?.some(a => a.tipo === "agendou" || a.tipo === "cancelou")) toast("A agenda mudou. Confira na aba Agenda.");
+  } catch (e) { toast(e.message); }
+  $("#agEnviar").disabled = false; $("#agTexto").focus();
+  await agCarregar(); agListar();
+};
+$("#agNova").onclick = () => { $("#agTel").value = "119" + String(Math.floor(10000000 + Math.random() * 89999999)); $("#agNome").value = ""; renderAgente(); };
+["agTel", "agNome"].forEach(id => $("#" + id).addEventListener("change", () => renderAgente()));
+$("#agLimpar").onclick = () => confirmar("Apagar todos os testes do agente?", "Apaga as conversas do simulador e os horários marcados por ele (os que têm a etiqueta teste). Conversas reais do WhatsApp não são afetadas.", "Apagar testes", async () => {
+  const { data, error } = await sb.rpc("limpar_testes_agente"); if (error) return fail(error);
+  toast(`Testes apagados (${data} horário(s) removido(s)).`); agConv = null; renderAgente();
+});

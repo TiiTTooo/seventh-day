@@ -55,6 +55,7 @@
     <button data-tab="clientes">Clientes</button>
     <button data-tab="faturamento" class="own">Faturamento</button>
     <button data-tab="avaliacoes">Avaliações</button>
+    <button data-tab="agente" class="own">Agente WhatsApp</button>
     <button data-tab="servicos" class="own">Serviços e preços</button>
     <button data-tab="equipe" class="own">Equipe</button>
     <button data-tab="imagens" class="own">Imagens</button>
@@ -95,6 +96,21 @@
   <section class="wrap tab hidden" id="tab-faturamento">
     <div class="tabhead"><div><h2>Faturamento</h2><p class="hint">Visível só para o dono e o Master.</p></div></div>
     <div id="fatBody"></div>
+  </section>
+
+  <section class="wrap tab hidden" id="tab-agente">
+    <div class="tabhead"><div><h2>Agente WhatsApp</h2><p class="hint">Converse com o atendente virtual como se fosse um cliente. Os horários marcados aqui entram na agenda com a etiqueta "teste" e podem ser apagados de uma vez.</p></div>
+      <div class="row"><button class="btn btn-ghost btn-sm" id="agLimpar">Apagar testes</button></div></div>
+    <div class="aggrid">
+      <div class="card agconvs"><h3>Conversas</h3><div id="agConvs"></div></div>
+      <div class="agphone">
+        <div class="agtop"><div><b id="agNomeTopo">Cliente de teste</b><small id="agTelTopo"></small></div>
+          <div class="agid"><input id="agNome" placeholder="Nome do cliente" maxlength="80"><input id="agTel" placeholder="WhatsApp com DDD" inputmode="tel" maxlength="15"><button class="btn btn-sm" id="agNova" title="Começar com outro número">Novo cliente</button></div></div>
+        <div class="agbanner hidden" id="agHumano"></div>
+        <div class="agmsgs" id="agMsgs" aria-live="polite"></div>
+        <form class="agbar" id="agForm"><input id="agTexto" placeholder="Digite como o cliente escreveria…" autocomplete="off" maxlength="2000"><button class="btn btn-dark" id="agEnviar">Enviar</button></form>
+      </div>
+    </div>
   </section>
 
   <section class="wrap tab hidden" id="tab-avaliacoes">

@@ -213,3 +213,32 @@ body.adm{background:#E7E6E3;min-height:100vh}
 .av p{margin:8px 0;max-width:70ch}
 .av .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 @media (max-width:640px){.avtop{grid-template-columns:1fr}}
+/* agente WhatsApp */
+.aggrid{display:grid;grid-template-columns:280px minmax(0,1fr);gap:16px;align-items:start}
+.agconvs{max-height:640px;overflow:auto}
+.agconv{display:flex;flex-direction:column;gap:2px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid #eee;padding:10px 4px;cursor:pointer;font:inherit}
+.agconv span{font-size:13px;color:#6b7476}
+.agconv.on{background:#F6F6F4}
+.agphone{background:#E9E4DC;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;height:640px;border:1px solid #ddd6cb}
+.agtop{background:var(--petrol);color:var(--paper);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.agtop small{display:block;opacity:.75;font-size:12px}
+.agid{display:flex;gap:6px;flex-wrap:wrap}
+.agid input{padding:6px 8px;border-radius:4px;border:0;font:inherit;font-size:14px;width:150px}
+.agbanner{background:#fff8e6;border-bottom:1px solid #ecd9a6;padding:10px 14px;display:flex;gap:10px;align-items:center;justify-content:space-between;font-size:14px}
+.agmsgs{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
+.agvazio{margin:auto;max-width:42ch;text-align:center;color:#6b6257;font-size:14px}
+.agb{max-width:78%;padding:8px 10px 4px;border-radius:8px;font-size:15px;line-height:1.45;box-shadow:0 1px 1px rgba(0,0,0,.08)}
+.agb.cli{align-self:flex-end;background:#D9FDD3}
+.agb.bot{align-self:flex-start;background:#fff}
+.agb time{display:block;text-align:right;font-size:11px;color:#8a8f90}
+.agdet{margin-top:4px;font-size:12px;color:#5d6668}
+.agdet summary{cursor:pointer}
+.agdet div{margin-top:4px;padding-top:4px;border-top:1px dashed #ddd;word-break:break-word}
+.agbar{display:flex;gap:8px;padding:10px;background:#F0EDE8}
+.agbar input{flex:1;padding:10px 12px;border-radius:20px;border:1px solid #d6d0c6;font:inherit}
+.digitando div{display:flex;gap:4px;padding:6px 2px}
+.digitando i{width:7px;height:7px;border-radius:50%;background:#9aa3a5;animation:pisca 1s infinite}
+.digitando i:nth-child(2){animation-delay:.2s}.digitando i:nth-child(3){animation-delay:.4s}
+@keyframes pisca{0%,100%{opacity:.3}50%{opacity:1}}
+@media (max-width:860px){.aggrid{grid-template-columns:1fr}.agphone{height:560px}}
+@media (prefers-reduced-motion:reduce){.digitando i{animation:none}}
