@@ -29,6 +29,20 @@ function agoraSP() {
   return { data, hora: `${p.hour}:${p.minute}`, dow };
 }
 
+// O agente só responde nos dias e horas escolhidos pelo dono. A faixa pode virar a noite (ex.: 19:00–09:00).
+function dentroDoHorario(c: any) {
+  if (!c?.horario_limitado) return true;
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit" })
+    .formatToParts(new Date()).map((x) => [x.type, x.value]));
+  const dow = new Date(`${p.year}-${p.month}-${p.day}T12:00:00Z`).getUTCDay();
+  const min = (t: string) => { const [h, m] = String(t).split(":").map(Number); return h * 60 + m; };
+  const agora = +p.hour * 60 + +p.minute, ini = min(c.hora_inicio), fim = min(c.hora_fim);
+  const dias: number[] = c.dias || [];
+  if (ini === fim) return dias.includes(dow);
+  if (ini < fim) return dias.includes(dow) && agora >= ini && agora < fim;
+  return (agora >= ini && dias.includes(dow)) || (agora < fim && dias.includes((dow + 6) % 7));
+}
+
 function somarDias(data: string, n: number) {
   const d = new Date(`${data}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
@@ -302,6 +316,20 @@ export async function atender(admin: SupabaseClient, canal: "simulador" | "whats
     admin.from("agente_regras").select("quando,resposta").eq("ativo", true).order("criado").limit(60),
   ]);
   if (agCfg && agCfg.ativo === false) return { resposta: null, humano: false, desligado: true, acoes: [] };
+  if (agCfg && !dentroDoHorario(agCfg)) {
+    // Fora do horário: silêncio, ou a mensagem automática no máximo uma vez a cada 6 horas por conversa
+    let resposta: string | null = null;
+    if (agCfg.mensagem_fora) {
+      const seisHoras = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
+      const { data: ja } = await admin.from("mensagens").select("id").eq("conversa_id", conv.id).eq("papel", "agente")
+        .gte("criado", seisHoras).contains("dados", { fora_horario: true }).limit(1);
+      if (!ja?.length) {
+        resposta = String(agCfg.mensagem_fora).slice(0, 500);
+        await admin.from("mensagens").insert({ conversa_id: conv.id, papel: "agente", texto: resposta, dados: { fora_horario: true, acoes: [] } });
+      }
+    }
+    return { resposta, humano: false, fora_horario: true, acoes: [] };
+  }
   const ctx: Ctx = {
     admin, conversaId: conv.id, telefone, nomeCliente: nome || conv.nome || "", teste: canal === "simulador",
     servCod: new Map((servicos || []).map((s: any, i: number) => [`S${i + 1}`, s])),

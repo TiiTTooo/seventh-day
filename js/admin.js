@@ -820,6 +820,9 @@ $("#agForm").onsubmit = async ev => {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.erro || "Falha ao falar com o agente (" + r.status + ").");
     if (j.acoes?.some(a => a.tipo === "agendou" || a.tipo === "cancelou")) toast("A agenda mudou. Confira na aba Agenda.");
+    else if (j.desligado) toast("O agente está desligado: ele não respondeu.");
+    else if (j.fora_horario && !j.resposta) toast("Fora do horário do agente: ele não respondeu.");
+    else if (j.humano && !j.resposta) toast("Esta conversa está com a equipe: o agente não respondeu.");
   } catch (e) { toast(e.message); }
   $("#agEnviar").disabled = false; $("#agTexto").focus();
   await agCarregar(); agListar();
@@ -870,6 +873,16 @@ async function renderDecisoes() {
       <div>
         <label class="sw"><input type="checkbox" id="dcAtivo" ${c.ativo ? "checked" : ""}> Agente ligado</label>
         <p class="hint">Desligado, ele não responde ninguém; as mensagens ficam para a equipe.</p>
+        <div class="dchor">
+          <label class="sw"><input type="checkbox" id="dcLim" ${c.horario_limitado ? "checked" : ""}> Responder só em alguns horários</label>
+          <div id="dcHorBox" class="${c.horario_limitado ? "" : "hidden"}">
+            <div class="dcfaixa"><label>Das <input type="time" id="dcIni" value="${String(c.hora_inicio).slice(0, 5)}"></label><label>às <input type="time" id="dcFim" value="${String(c.hora_fim).slice(0, 5)}"></label></div>
+            <p class="hint">Pode virar a noite: das 19:00 às 09:00 faz o agente atender só com a barbearia fechada.</p>
+            <div class="dcdias">${[1, 2, 3, 4, 5, 6, 0].map(d => `<label class="chipchk"><input type="checkbox" data-dia="${d}" ${(c.dias || []).includes(d) ? "checked" : ""}>${WDL[d].slice(0, 3)}</label>`).join("")}</div>
+            <label for="dcFora" style="margin-top:8px">Fora do horário, responder com (deixe vazio para ficar em silêncio)</label>
+            <textarea id="dcFora" rows="2" maxlength="500" placeholder="Ex.: Oi! Nosso atendimento automático volta às 8h. Para agendar agora, use o site: seventh-day-glgv.vercel.app">${esc(c.mensagem_fora || "")}</textarea>
+          </div>
+        </div>
         <label for="dcAss" style="margin-top:12px">Assuntos que vão para a equipe (um por linha)</label>
         <textarea id="dcAss" rows="4" maxlength="1000">${esc((c.assuntos_equipe || []).join("\n"))}</textarea>
         <label for="dcHoras" style="margin-top:10px">Depois de passar para a equipe, o agente fica sem responder por (horas)</label>
@@ -883,7 +896,7 @@ async function renderDecisoes() {
         <div class="reglist">${(rs || []).map(r => `<div class="reg ${r.ativo ? "" : "off"}">
           <div><span class="tag ${r.origem === "correcao" ? "" : "ok"}">${r.origem === "correcao" ? "Correção" : "Regra"}</span> Quando ${esc(r.quando)}</div>
           <div class="hint">→ ${esc(r.resposta)}</div>
-          <div class="row"><label class="sw"><input type="checkbox" data-rat="${r.id}" ${r.ativo ? "checked" : ""}> Ativa</label><button class="linkbtn" data-rdel="${r.id}">Apagar</button></div>
+          <div class="row"><label class="sw"><input type="checkbox" data-rat="${r.id}" ${r.ativo ? "checked" : ""}> Ativa</label><button class="linkbtn" style="color:var(--ink)" data-redit="${r.id}">Editar</button><button class="linkbtn" data-rdel="${r.id}">Apagar</button></div>
         </div>`).join("") || `<p class="hint">Nenhuma regra ainda.</p>`}</div>
         <details class="regnova"><summary>Adicionar regra</summary>
           <label for="rnQ">Quando…</label><input id="rnQ" maxlength="300" placeholder="o cliente perguntar se aceita cartão">
@@ -894,9 +907,27 @@ async function renderDecisoes() {
     </div>`;
   $("#dcSalvar").onclick = async () => {
     const assuntos = $("#dcAss").value.split("\n").map(x => x.trim()).filter(Boolean).slice(0, 20);
-    const { error } = await sb.from("agente_config").update({ ativo: $("#dcAtivo").checked, assuntos_equipe: assuntos, horas_equipe: Math.min(72, Math.max(1, +$("#dcHoras").value || 12)), instrucoes: $("#dcInst").value.trim(), atualizado: new Date().toISOString() }).eq("id", 1);
+    const dias = [...box.querySelectorAll("[data-dia]")].filter(x => x.checked).map(x => +x.dataset.dia);
+    if ($("#dcLim").checked && !dias.length) return toast("Escolha pelo menos um dia para o agente atender.");
+    const { error } = await sb.from("agente_config").update({ horario_limitado: $("#dcLim").checked, hora_inicio: $("#dcIni").value || "08:00", hora_fim: $("#dcFim").value || "22:00", dias, mensagem_fora: $("#dcFora").value.trim(), ativo: $("#dcAtivo").checked, assuntos_equipe: assuntos, horas_equipe: Math.min(72, Math.max(1, +$("#dcHoras").value || 12)), instrucoes: $("#dcInst").value.trim(), atualizado: new Date().toISOString() }).eq("id", 1);
     if (error) return fail(error); toast("Decisões salvas.");
   };
+  $("#dcLim").onchange = () => $("#dcHorBox").classList.toggle("hidden", !$("#dcLim").checked);
+  box.querySelectorAll("[data-redit]").forEach(b => b.onclick = () => {
+    const r = (rs || []).find(x => x.id === b.dataset.redit); if (!r) return;
+    const card = b.closest(".reg");
+    card.innerHTML = `<label>Quando…</label><input class="reQ" maxlength="300" value="${esc(r.quando)}">
+      <label style="margin-top:6px">O agente deve…</label><textarea class="reR" rows="3" maxlength="1000">${esc(r.resposta)}</textarea>
+      <div class="row"><button class="btn btn-sm btn-dark reS">Salvar</button><button class="linkbtn reC">Cancelar</button></div>`;
+    card.querySelector(".reQ").focus();
+    card.querySelector(".reC").onclick = renderDecisoes;
+    card.querySelector(".reS").onclick = async () => {
+      const quando = card.querySelector(".reQ").value.trim(), resposta = card.querySelector(".reR").value.trim();
+      if (quando.length < 3 || resposta.length < 3) return toast("Preencha as duas partes da regra.");
+      const { error } = await sb.from("agente_regras").update({ quando, resposta }).eq("id", r.id);
+      if (error) return fail(error); toast("Regra atualizada."); renderDecisoes();
+    };
+  });
   box.querySelectorAll("[data-rat]").forEach(cb => cb.onchange = async () => { const { error } = await sb.from("agente_regras").update({ ativo: cb.checked }).eq("id", cb.dataset.rat); if (error) fail(error); else renderDecisoes(); });
   box.querySelectorAll("[data-rdel]").forEach(b => b.onclick = () => confirmar("Apagar esta regra?", "O agente deixa de seguir esta regra nas próximas conversas.", "Apagar", async () => { const { error } = await sb.from("agente_regras").delete().eq("id", b.dataset.rdel); if (error) fail(error); else { toast("Regra apagada."); renderDecisoes(); } }));
   $("#rnS").onclick = async () => {

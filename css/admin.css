@@ -254,3 +254,11 @@ body.adm{background:#E7E6E3;min-height:100vh}
 .regnova input,.regnova textarea{width:100%}
 .atabs .badge{display:inline-block;min-width:18px;padding:0 6px;border-radius:9px;background:#C0392B;color:#fff;font-size:12px;line-height:18px;text-align:center;margin-left:4px}
 @media (max-width:860px){.decgrid{grid-template-columns:1fr}}
+.dchor{border:1px solid #e6e3dd;border-radius:6px;padding:10px 12px;margin-top:12px}
+.dcfaixa{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px}
+.dcfaixa label{display:flex;align-items:center;gap:6px}
+.dcdias{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.chipchk{display:inline-flex;align-items:center;gap:4px;border:1px solid #d9d8d3;border-radius:16px;padding:4px 10px;font-size:14px;cursor:pointer}
+.chipchk:has(input:checked){background:#1A1516;color:#fff;border-color:#1A1516}
+.chipchk input{margin:0}
+.reg textarea,.reg input{width:100%}

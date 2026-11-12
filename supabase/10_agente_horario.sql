@@ -1,0 +1,1 @@
+-- 10: horário de funcionamento do agente (ver migration agente_horario_funcionamento)
