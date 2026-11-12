@@ -18,7 +18,6 @@ const cors = (origem: string | null) => ({
 
 const DIAS = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
 const brl = (v: number) => "R$ " + Number(v).toFixed(2).replace(".", ",");
-const hhmm = (m: number) => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
 
 function agoraSP() {
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
