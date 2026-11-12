@@ -1,0 +1,1 @@
+-- 09: decisões do dono, regras/correções do agente e realtime em conversas (ver migration agente_decisoes_e_aprendizados)

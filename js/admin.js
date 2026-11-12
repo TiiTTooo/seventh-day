@@ -327,13 +327,14 @@ function ouvirNovos() {
     novos.add(a.id);
     const d = fromKey(a.data);
     bip();
-    if (a.origem === "site") popupNovo(a); else toast(`Encaixe adicionado: ${a.cliente_nome}`);
+    if (a.origem === "site" || (a.origem === "whatsapp" && !a.teste)) popupNovo(a); else toast(a.teste ? `Teste do agente: ${a.cliente_nome}` : `Encaixe adicionado: ${a.cliente_nome}`);
     try { if ("Notification" in window && Notification.permission === "granted" && document.hidden) new Notification("Novo agendamento · " + CFG.nome, { body: `${a.cliente_nome} · ${pad(d.getDate())}/${pad(d.getMonth() + 1)} às ${fmtMin(a.inicio)}`, icon: "fotos/logo.svg" }); } catch (e) {}
     const t = document.title; document.title = "(Novo) " + t.replace(/^\(Novo\) /, ""); setTimeout(() => document.title = t.replace(/^\(Novo\) /, ""), 15000);
     if (!$("#tab-agenda").classList.contains("hidden")) renderAgenda();
     if (!$("#tab-clientes").classList.contains("hidden")) renderClientes();
   }).on("postgres_changes", { event: "UPDATE", schema: "public", table: "agendamentos" }, () => { if (!$("#tab-agenda").classList.contains("hidden")) renderAgenda(); }).subscribe();
   avisoPermissao();
+  ouvirEquipe();
 }
 function avisoPermissao() {
   const box = $("#notifBar"); if (!box) return;
@@ -756,6 +757,7 @@ const agFmtHora = iso => { const d = new Date(iso); return pad(d.getHours()) + "
 const agWa = t => esc(t).replace(/\*([^*\n]+)\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
 function agTelAtual() { return $("#agTel").value.replace(/\D/g, ""); }
 async function renderAgente() {
+  renderDecisoes();
   if (!$("#agTel").value) { $("#agTel").value = "11900000001"; $("#agNome").value = "Cliente Teste"; }
   $("#agTelTopo").textContent = $("#agTel").value;
   $("#agNomeTopo").textContent = $("#agNome").value || "Cliente de teste";
@@ -780,7 +782,9 @@ async function agCarregar() {
   const box = $("#agMsgs");
   if (!c) { box.innerHTML = `<div class="agvazio">Escreva como um cliente: "oi, quanto é o corte?", "tem horário amanhã à tarde?", "quero cancelar meu horário".</div>`; $("#agHumano").classList.add("hidden"); return; }
   const { data: ms } = await sb.from("mensagens").select("papel,texto,dados,criado").eq("conversa_id", c.id).order("criado").limit(200);
-  box.innerHTML = (ms || []).map(agBolha).join("");
+  agMsgsCache = ms || [];
+  box.innerHTML = agMsgsCache.map((m, i) => agBolha(m, i)).join("");
+  box.querySelectorAll("[data-cor]").forEach(b => b.onclick = () => agCorrigir(+b.dataset.cor));
   box.scrollTop = box.scrollHeight;
   const hum = c.humano_ate && new Date(c.humano_ate) > new Date();
   $("#agHumano").classList.toggle("hidden", !hum);
@@ -789,11 +793,13 @@ async function agCarregar() {
     $("#agDevolver").onclick = async () => { const { error } = await sb.from("conversas").update({ humano_ate: null, motivo_humano: null }).eq("id", c.id); if (error) return fail(error); toast("O agente voltou a responder."); agCarregar(); agListar(); };
   }
 }
-function agBolha(m) {
+let agMsgsCache = [];
+function agBolha(m, i) {
   const lado = m.papel === "cliente" ? "cli" : "bot";
   const fer = (m.dados?.acoes || []).filter(a => a.tipo === "ferramenta");
   const det = fer.length ? `<details class="agdet"><summary>${fer.length} consulta(s) à agenda</summary>${fer.map(a => `<div><b>${esc(a.nome)}</b> ${esc(JSON.stringify(a.entrada))}<br><span>${esc(a.saida)}</span></div>`).join("")}</details>` : "";
-  return `<div class="agb ${lado}"><div>${agWa(m.texto)}</div><time>${agFmtHora(m.criado)}</time>${det}</div>`;
+  const cor = lado === "bot" && i !== undefined ? `<button class="agcor" data-cor="${i}">Corrigir esta resposta</button>` : "";
+  return `<div class="agb ${lado}"><div>${agWa(m.texto)}</div><time>${agFmtHora(m.criado)}</time>${det}${cor}</div>`;
 }
 $("#agForm").onsubmit = async ev => {
   ev.preventDefault();
@@ -824,3 +830,111 @@ $("#agLimpar").onclick = () => confirmar("Apagar todos os testes do agente?", "A
   const { data, error } = await sb.rpc("limpar_testes_agente"); if (error) return fail(error);
   toast(`Testes apagados (${data} horário(s) removido(s)).`); agConv = null; renderAgente();
 });
+
+
+/* ---- correções: viram regras que o agente segue em todas as conversas ---- */
+function agCorrigir(i) {
+  const m = agMsgsCache[i]; if (!m) return;
+  let k = i - 1; while (k >= 0 && agMsgsCache[k].papel !== "cliente") k--;
+  const cli = k >= 0 ? agMsgsCache[k].texto : "";
+  openModal(`<h3>Corrigir o agente</h3>
+    <p class="hint">A correção vira uma regra que o agente segue em todas as conversas a partir de agora.</p>
+    ${cli ? `<p class="hint" style="margin-top:10px">Cliente: <i>"${esc(cli.slice(0, 200))}"</i></p>` : ""}
+    <p class="hint">Agente respondeu: <i>"${esc(m.texto.slice(0, 300))}"</i></p>
+    <label for="crQuando" style="margin-top:12px">Quando acontecer…</label>
+    <input id="crQuando" maxlength="300" value="${esc(cli ? "o cliente disser algo como: " + cli.slice(0, 120) : "")}">
+    <label for="crResp" style="margin-top:10px">O agente deve…</label>
+    <textarea id="crResp" rows="4" maxlength="1000" placeholder="Ex.: responder que o salão não abre em feriados e oferecer o próximo dia útil."></textarea>
+    <div class="cacts" style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn btn-ghost" id="crN">Cancelar</button><button class="btn btn-dark" id="crS">Salvar correção</button></div>`);
+  $("#crN").onclick = closeModal;
+  $("#crS").onclick = async () => {
+    const quando = $("#crQuando").value.trim(), resposta = $("#crResp").value.trim();
+    if (quando.length < 3 || resposta.length < 3) return toast("Preencha as duas partes da correção.");
+    const { error } = await sb.from("agente_regras").insert({ quando, resposta, origem: "correcao", exemplo: m.texto.slice(0, 1000) });
+    if (error) return fail(error);
+    closeModal(); toast("Correção salva. O agente já segue essa regra."); renderDecisoes();
+  };
+}
+
+/* ---- decisões do dono ---- */
+async function renderDecisoes() {
+  const box = $("#agDec"); if (!box) return;
+  const [{ data: c }, { data: rs }] = await Promise.all([
+    sb.from("agente_config").select("*").eq("id", 1).maybeSingle(),
+    sb.from("agente_regras").select("*").order("criado"),
+  ]);
+  if (!c) { box.innerHTML = `<p class="hint">Não foi possível carregar as decisões do agente.</p>`; return; }
+  box.innerHTML = `<h3>Decisões do agente</h3>
+    <p class="hint">O que vale para todas as conversas. O agente segue isto acima do próprio julgamento.</p>
+    <div class="decgrid">
+      <div>
+        <label class="sw"><input type="checkbox" id="dcAtivo" ${c.ativo ? "checked" : ""}> Agente ligado</label>
+        <p class="hint">Desligado, ele não responde ninguém; as mensagens ficam para a equipe.</p>
+        <label for="dcAss" style="margin-top:12px">Assuntos que vão para a equipe (um por linha)</label>
+        <textarea id="dcAss" rows="4" maxlength="1000">${esc((c.assuntos_equipe || []).join("\n"))}</textarea>
+        <label for="dcHoras" style="margin-top:10px">Depois de passar para a equipe, o agente fica sem responder por (horas)</label>
+        <input id="dcHoras" type="number" min="1" max="72" value="${c.horas_equipe}">
+        <label for="dcInst" style="margin-top:10px">Instruções gerais (opcional)</label>
+        <textarea id="dcInst" rows="3" maxlength="2000" placeholder="Ex.: chame o cliente pelo primeiro nome; sempre ofereça a barba junto com o corte.">${esc(c.instrucoes || "")}</textarea>
+        <button class="btn btn-dark btn-sm" id="dcSalvar" style="margin-top:10px">Salvar decisões</button>
+      </div>
+      <div>
+        <b>Regras e correções</b>
+        <div class="reglist">${(rs || []).map(r => `<div class="reg ${r.ativo ? "" : "off"}">
+          <div><span class="tag ${r.origem === "correcao" ? "" : "ok"}">${r.origem === "correcao" ? "Correção" : "Regra"}</span> Quando ${esc(r.quando)}</div>
+          <div class="hint">→ ${esc(r.resposta)}</div>
+          <div class="row"><label class="sw"><input type="checkbox" data-rat="${r.id}" ${r.ativo ? "checked" : ""}> Ativa</label><button class="linkbtn" data-rdel="${r.id}">Apagar</button></div>
+        </div>`).join("") || `<p class="hint">Nenhuma regra ainda.</p>`}</div>
+        <details class="regnova"><summary>Adicionar regra</summary>
+          <label for="rnQ">Quando…</label><input id="rnQ" maxlength="300" placeholder="o cliente perguntar se aceita cartão">
+          <label for="rnR" style="margin-top:8px">O agente deve…</label><textarea id="rnR" rows="2" maxlength="1000" placeholder="dizer que aceitamos Pix, dinheiro e cartão de débito e crédito"></textarea>
+          <button class="btn btn-sm" id="rnS" style="margin-top:8px">Adicionar</button>
+        </details>
+      </div>
+    </div>`;
+  $("#dcSalvar").onclick = async () => {
+    const assuntos = $("#dcAss").value.split("\n").map(x => x.trim()).filter(Boolean).slice(0, 20);
+    const { error } = await sb.from("agente_config").update({ ativo: $("#dcAtivo").checked, assuntos_equipe: assuntos, horas_equipe: Math.min(72, Math.max(1, +$("#dcHoras").value || 12)), instrucoes: $("#dcInst").value.trim(), atualizado: new Date().toISOString() }).eq("id", 1);
+    if (error) return fail(error); toast("Decisões salvas.");
+  };
+  box.querySelectorAll("[data-rat]").forEach(cb => cb.onchange = async () => { const { error } = await sb.from("agente_regras").update({ ativo: cb.checked }).eq("id", cb.dataset.rat); if (error) fail(error); else renderDecisoes(); });
+  box.querySelectorAll("[data-rdel]").forEach(b => b.onclick = () => confirmar("Apagar esta regra?", "O agente deixa de seguir esta regra nas próximas conversas.", "Apagar", async () => { const { error } = await sb.from("agente_regras").delete().eq("id", b.dataset.rdel); if (error) fail(error); else { toast("Regra apagada."); renderDecisoes(); } }));
+  $("#rnS").onclick = async () => {
+    const quando = $("#rnQ").value.trim(), resposta = $("#rnR").value.trim();
+    if (quando.length < 3 || resposta.length < 3) return toast("Preencha o quando e o que o agente deve fazer.");
+    const { error } = await sb.from("agente_regras").insert({ quando, resposta });
+    if (error) return fail(error); toast("Regra adicionada."); renderDecisoes();
+  };
+}
+
+/* ---- aviso quando o agente passa a conversa para a equipe ---- */
+const avisadas = new Set();
+async function atualizarBadgeAgente() {
+  if (!DONO) return;
+  const { count } = await sb.from("conversas").select("id", { count: "exact", head: true }).gt("humano_ate", new Date().toISOString());
+  const b = document.querySelector('[data-tab="agente"]');
+  if (b) b.innerHTML = "Agente WhatsApp" + (count ? ` <span class="badge" aria-label="${count} conversa(s) esperando a equipe">${count}</span>` : "");
+}
+function ouvirEquipe() {
+  if (!DONO) return;
+  atualizarBadgeAgente();
+  sb.channel("convs").on("postgres_changes", { event: "*", schema: "public", table: "conversas" }, p => {
+    const c = p.new; if (!c || !c.id) return;
+    atualizarBadgeAgente();
+    if (!$("#tab-agente").classList.contains("hidden")) agListar();
+    if (!c.humano_ate || new Date(c.humano_ate) <= new Date() || !c.motivo_humano) return;
+    const k = c.id + c.humano_ate; if (avisadas.has(k)) return; avisadas.add(k);
+    bip();
+    const tel = c.telefone.length <= 11 ? "55" + c.telefone : c.telefone;
+    openModal(`<div class="novo-pop"><div class="sino" aria-hidden="true">🙋</div><h3>Cliente esperando a equipe</h3>
+      <p class="big">${esc(c.nome || c.telefone)}</p>
+      <p>${esc(c.motivo_humano)}</p>
+      <p class="hint">${c.canal === "simulador" ? "Conversa de teste do simulador." : "O agente parou de responder esta conversa. Responda pelo WhatsApp da barbearia."}</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap"><button class="btn btn-ghost" id="eqOk">Depois</button>
+      ${c.canal === "whatsapp" ? `<a class="btn btn-ghost" target="_blank" rel="noopener" href="https://wa.me/${esc(tel)}">Abrir no WhatsApp</a>` : ""}
+      <button class="btn btn-brass" id="eqVer">Ver conversa</button></div></div>`);
+    $("#eqOk").onclick = closeModal;
+    $("#eqVer").onclick = () => { closeModal(); $("#agTel").value = c.telefone; $("#agNome").value = c.nome || ""; abrirAba("agente"); };
+    try { if ("Notification" in window && Notification.permission === "granted" && document.hidden) new Notification("Cliente esperando a equipe · " + CFG.nome, { body: `${c.nome || c.telefone}: ${c.motivo_humano}`, icon: "fotos/logo.svg" }); } catch (e) {}
+  }).subscribe();
+}

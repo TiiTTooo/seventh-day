@@ -242,3 +242,15 @@ body.adm{background:#E7E6E3;min-height:100vh}
 @keyframes pisca{0%,100%{opacity:.3}50%{opacity:1}}
 @media (max-width:860px){.aggrid{grid-template-columns:1fr}.agphone{height:560px}}
 @media (prefers-reduced-motion:reduce){.digitando i{animation:none}}
+.agcor{display:block;margin-top:4px;background:none;border:0;padding:0;font:inherit;font-size:12px;color:#8a6d2b;text-decoration:underline;cursor:pointer}
+.agdec{margin-top:16px}
+.decgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;margin-top:10px}
+.decgrid textarea,.decgrid input:not([type=checkbox]){width:100%}
+.reglist{display:flex;flex-direction:column;gap:8px;margin:8px 0}
+.reg{border:1px solid #e6e3dd;border-radius:6px;padding:8px 10px;font-size:14px}
+.reg.off{opacity:.55}
+.reg .row{display:flex;gap:14px;align-items:center;margin-top:4px}
+.regnova summary{cursor:pointer;font-weight:600}
+.regnova input,.regnova textarea{width:100%}
+.atabs .badge{display:inline-block;min-width:18px;padding:0 6px;border-radius:9px;background:#C0392B;color:#fff;font-size:12px;line-height:18px;text-align:center;margin-left:4px}
+@media (max-width:860px){.decgrid{grid-template-columns:1fr}}
