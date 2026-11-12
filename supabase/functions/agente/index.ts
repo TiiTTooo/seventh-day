@@ -280,7 +280,7 @@ async function chamarClaude(chave: string, sistema: string, mensagens: any[]) {
 }
 
 /** Processa uma mensagem do cliente e devolve a resposta do agente (ou null se a equipe assumiu). */
-export async function atender(admin: SupabaseClient, canal: "simulador" | "whatsapp", telefoneBruto: string, nome: string, texto: string) {
+export async function atender(admin: SupabaseClient, canal: "simulador" | "whatsapp", telefoneBruto: string, nome: string, texto: string, waMsgId?: string) {
   const chave = Deno.env.get("ANTHROPIC_API_KEY");
   if (!chave) throw new Error("A chave da Anthropic (ANTHROPIC_API_KEY) não está configurada nos segredos das Edge Functions.");
   const telefone = normalizarTelefone(telefoneBruto);
@@ -295,7 +295,12 @@ export async function atender(admin: SupabaseClient, canal: "simulador" | "whats
     if (r.error) throw new Error(r.error.message);
     conv = r.data;
   }
-  await admin.from("mensagens").insert({ conversa_id: conv.id, papel: "cliente", texto: msg });
+  if (waMsgId) {
+    // A Meta pode reenviar o mesmo aviso; cada mensagem é respondida uma vez só
+    const { data: ja } = await admin.from("mensagens").select("id").eq("conversa_id", conv.id).contains("dados", { wa_msg_id: waMsgId }).limit(1);
+    if (ja?.length) return { resposta: null, humano: false, duplicada: true, acoes: [] };
+  }
+  await admin.from("mensagens").insert({ conversa_id: conv.id, papel: "cliente", texto: msg, dados: waMsgId ? { wa_msg_id: waMsgId } : null });
   await admin.from("conversas").update({ ultima_msg: new Date().toISOString(), ...(nome ? { nome: nome.slice(0, 80) } : {}) }).eq("id", conv.id);
 
   if (conv.humano_ate && new Date(conv.humano_ate) > new Date()) return { resposta: null, humano: true, acoes: [] };
@@ -367,7 +372,78 @@ export async function atender(admin: SupabaseClient, canal: "simulador" | "whats
   return { resposta, humano, acoes: ctx.acoes, tokens: { entrada: entradaTokens, saida: saidaTokens } };
 }
 
+// ===================== WhatsApp (API oficial da Meta) =====================
+const enc = new TextEncoder();
+async function assinaturaValida(corpo: string, cabecalho: string | null) {
+  const segredo = Deno.env.get("WHATSAPP_APP_SECRET");
+  if (!segredo || !cabecalho?.startsWith("sha256=")) return false;
+  const chave = await crypto.subtle.importKey("raw", enc.encode(segredo), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", chave, enc.encode(corpo)));
+  const esperado = Array.from(sig).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const recebido = cabecalho.slice(7);
+  if (recebido.length !== esperado.length) return false;
+  let dif = 0;
+  for (let i = 0; i < esperado.length; i++) dif |= esperado.charCodeAt(i) ^ recebido.charCodeAt(i);
+  return dif === 0;
+}
+
+async function enviarWhatsApp(para: string, texto: string) {
+  const token = Deno.env.get("WHATSAPP_TOKEN"), phoneId = Deno.env.get("WHATSAPP_PHONE_ID");
+  if (!token || !phoneId) { console.error("WHATSAPP_TOKEN ou WHATSAPP_PHONE_ID não configurados"); return; }
+  const r = await fetch(`https://graph.facebook.com/v25.0/${phoneId}/messages`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to: para, type: "text", text: { preview_url: false, body: texto.slice(0, 4000) } }),
+  });
+  if (!r.ok) console.error("Falha ao enviar no WhatsApp", r.status, (await r.text()).slice(0, 300));
+}
+
+async function processarWebhook(admin: SupabaseClient, payload: any) {
+  for (const entry of payload?.entry || []) {
+    for (const ch of entry?.changes || []) {
+      const v = ch?.value;
+      if (!v?.messages?.length) continue; // status de entrega/leitura: ignorado
+      const meuPhoneId = Deno.env.get("WHATSAPP_PHONE_ID");
+      if (meuPhoneId && v.metadata?.phone_number_id !== meuPhoneId) continue;
+      for (const m of v.messages) {
+        const de = String(m.from || "");
+        const nome = v.contacts?.find((c: any) => c.wa_id === de)?.profile?.name || "";
+        try {
+          if (m.type !== "text") {
+            await enviarWhatsApp(de, "Por enquanto eu só entendo mensagens de texto. Pode escrever o que você precisa?");
+            continue;
+          }
+          const r = await atender(admin, "whatsapp", de, nome, m.text?.body || "", m.id);
+          if (r.resposta) await enviarWhatsApp(de, r.resposta);
+        } catch (e) {
+          console.error("Erro ao atender mensagem do WhatsApp", e);
+        }
+      }
+    }
+  }
+}
+
 Deno.serve(async (req) => {
+  const url = new URL(req.url);
+  // Verificação do webhook pela Meta (feita uma vez, ao configurar)
+  if (req.method === "GET" && url.searchParams.get("hub.mode") === "subscribe") {
+    const ok = url.searchParams.get("hub.verify_token") && url.searchParams.get("hub.verify_token") === Deno.env.get("WHATSAPP_VERIFY_TOKEN");
+    return ok ? new Response(url.searchParams.get("hub.challenge") || "", { status: 200 }) : new Response("Forbidden", { status: 403 });
+  }
+  // Mensagens que chegam do WhatsApp: assinadas pela Meta
+  const assinatura = req.headers.get("x-hub-signature-256");
+  if (req.method === "POST" && assinatura) {
+    const corpo = await req.text();
+    if (!(await assinaturaValida(corpo, assinatura))) return new Response("Forbidden", { status: 403 });
+    const adminWa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
+    let payload: any = null;
+    try { payload = JSON.parse(corpo); } catch { return new Response("ok", { status: 200 }); }
+    // Responde 200 na hora e atende em segundo plano, para a Meta não reenviar
+    // @ts-ignore EdgeRuntime existe no Supabase
+    EdgeRuntime.waitUntil(processarWebhook(adminWa, payload));
+    return new Response("ok", { status: 200 });
+  }
+
   const origem = req.headers.get("origin");
   const h = { ...cors(origem), "content-type": "application/json" };
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors(origem) });

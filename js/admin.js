@@ -752,7 +752,7 @@ async function renderAvaliacoes() {
 
 
 /* ===================== agente WhatsApp (simulador) ===================== */
-let agConv = null;
+let agConv = null, agCanal = "simulador";
 const agFmtHora = iso => { const d = new Date(iso); return pad(d.getHours()) + ":" + pad(d.getMinutes()); };
 const agWa = t => esc(t).replace(/\*([^*\n]+)\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
 function agTelAtual() { return $("#agTel").value.replace(/\D/g, ""); }
@@ -770,14 +770,17 @@ async function agListar() {
   const agora = new Date();
   $("#agConvs").innerHTML = !data.length ? `<p class="hint">Nenhuma conversa ainda. Mande a primeira mensagem ao lado.</p>` : data.map(c => {
     const hum = c.humano_ate && new Date(c.humano_ate) > agora;
-    return `<button class="agconv ${agConv && agConv.id === c.id ? "on" : ""}" data-c="${c.id}" data-tel="${esc(c.telefone)}" data-nome="${esc(c.nome || "")}">
+    return `<button class="agconv ${agConv && agConv.id === c.id ? "on" : ""}" data-c="${c.id}" data-canal="${c.canal}" data-tel="${esc(c.telefone)}" data-nome="${esc(c.nome || "")}">
       <b>${esc(c.nome || c.telefone)}</b><span>${c.canal === "simulador" ? "teste" : "WhatsApp"} · ${agFmtHora(c.ultima_msg)}</span>${hum ? `<span class="tag">Com a equipe</span>` : ""}</button>`;
   }).join("");
-  $("#agConvs").querySelectorAll("[data-c]").forEach(b => b.onclick = () => { $("#agTel").value = b.dataset.tel; $("#agNome").value = b.dataset.nome; renderAgente(); });
+  $("#agConvs").querySelectorAll("[data-c]").forEach(b => b.onclick = () => { agCanal = b.dataset.canal; $("#agTel").value = b.dataset.tel; $("#agNome").value = b.dataset.nome; renderAgente(); });
 }
 async function agCarregar() {
   const tel = agTelAtual();
-  const { data: c } = await sb.from("conversas").select("*").eq("canal", "simulador").eq("telefone", tel).maybeSingle();
+  const { data: c } = await sb.from("conversas").select("*").eq("canal", agCanal).eq("telefone", tel).maybeSingle();
+  const real = agCanal === "whatsapp";
+  $("#agForm").classList.toggle("hidden", real);
+  $("#agTelTopo").textContent = real ? $("#agTel").value + " · conversa real do WhatsApp (só leitura)" : $("#agTel").value;
   agConv = c || null;
   const box = $("#agMsgs");
   if (!c) { box.innerHTML = `<div class="agvazio">Escreva como um cliente: "oi, quanto é o corte?", "tem horário amanhã à tarde?", "quero cancelar meu horário".</div>`; $("#agHumano").classList.add("hidden"); return; }
@@ -827,8 +830,8 @@ $("#agForm").onsubmit = async ev => {
   $("#agEnviar").disabled = false; $("#agTexto").focus();
   await agCarregar(); agListar();
 };
-$("#agNova").onclick = () => { $("#agTel").value = "119" + String(Math.floor(10000000 + Math.random() * 89999999)); $("#agNome").value = ""; renderAgente(); };
-["agTel", "agNome"].forEach(id => $("#" + id).addEventListener("change", () => renderAgente()));
+$("#agNova").onclick = () => { agCanal = "simulador"; $("#agTel").value = "119" + String(Math.floor(10000000 + Math.random() * 89999999)); $("#agNome").value = ""; renderAgente(); };
+["agTel", "agNome"].forEach(id => $("#" + id).addEventListener("change", () => { agCanal = "simulador"; renderAgente(); }));
 $("#agLimpar").onclick = () => confirmar("Apagar todos os testes do agente?", "Apaga as conversas do simulador e os horários marcados por ele (os que têm a etiqueta teste). Conversas reais do WhatsApp não são afetadas.", "Apagar testes", async () => {
   const { data, error } = await sb.rpc("limpar_testes_agente"); if (error) return fail(error);
   toast(`Testes apagados (${data} horário(s) removido(s)).`); agConv = null; renderAgente();
