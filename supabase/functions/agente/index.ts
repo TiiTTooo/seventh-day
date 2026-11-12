@@ -395,14 +395,20 @@ async function enviarWhatsApp(para: string, texto: string) {
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to: para, type: "text", text: { preview_url: false, body: texto.slice(0, 4000) } }),
   });
-  if (!r.ok) console.error("Falha ao enviar no WhatsApp", r.status, (await r.text()).slice(0, 300));
+  const corpo = (await r.text()).slice(0, 400);
+  if (!r.ok) console.error("Falha ao enviar no WhatsApp", r.status, corpo);
+  else console.log("WhatsApp aceitou o envio", corpo);
 }
 
 async function processarWebhook(admin: SupabaseClient, payload: any) {
   for (const entry of payload?.entry || []) {
     for (const ch of entry?.changes || []) {
       const v = ch?.value;
-      if (!v?.messages?.length) continue; // status de entrega/leitura: ignorado
+      for (const st of v?.statuses || []) {
+        if (st?.status === "failed") console.error("WhatsApp não entregou", JSON.stringify(st.errors || []).slice(0, 500));
+        else console.log("Status WhatsApp:", st?.status);
+      }
+      if (!v?.messages?.length) continue;
       const meuPhoneId = Deno.env.get("WHATSAPP_PHONE_ID");
       if (meuPhoneId && v.metadata?.phone_number_id !== meuPhoneId) continue;
       for (const m of v.messages) {
