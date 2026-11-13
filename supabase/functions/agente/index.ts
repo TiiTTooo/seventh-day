@@ -248,7 +248,7 @@ REGRAS:
 
 DECISÕES DO DONO (valem mais que o seu próprio julgamento):
 Assuntos que vão para a equipe: ${(agCfg?.assuntos_equipe || []).join("; ") || "nenhum além dos que você não souber responder"}.
-${agCfg?.instrucoes ? "Instruções do dono: " + agCfg.instrucoes + "\n" : ""}${regras.length ? "Regras e correções (siga sempre):\n" + regras.map((r, i) => `${i + 1}. Quando ${r.quando}: ${r.resposta}`).join("\n") : ""}`;
+${agCfg?.instrucoes ? "Instruções do dono: " + agCfg.instrucoes + "\n" : ""}${agCfg?.dizer ? "Jeito de falar que o dono quer (dicas do que dizer): " + agCfg.dizer + "\n" : ""}${agCfg?.nao_dizer ? "NUNCA diga nem prometa (o dono proibiu): " + agCfg.nao_dizer + "\n" : ""}${regras.length ? "Regras e correções (siga sempre):\n" + regras.map((r, i) => `${i + 1}. Quando ${r.quando}: ${r.resposta}`).join("\n") : ""}`;
 }
 
 function historicoParaClaude(msgs: any[]) {
@@ -492,6 +492,11 @@ async function processarYCloud(admin: SupabaseClient, ev: any) {
     if (!(await permitido(admin, tel)).ok) return; // fora da lista de teste: nem grava
     const nome = m.customerProfile?.name || "";
     try {
+      const botao = m.button || m.interactive?.button_reply;
+      if (m.type === "button" || m.type === "interactive" && botao) {
+        await respostaDoLembrete(admin, tel, nome, botao?.payload || botao?.id || "", botao?.text || botao?.title || "", m.wamid || m.id);
+        return;
+      }
       if (m.type !== "text") {
         const id = await enviarTexto(tel, "Por enquanto eu só entendo mensagens de texto. Pode escrever o que você precisa?");
         if (!id) console.error("Não consegui responder mensagem não-texto");
@@ -534,6 +539,105 @@ async function processarYCloud(admin: SupabaseClient, ev: any) {
   }
 }
 
+// ===================== Lembretes 24h antes (modelo aprovado pela Meta) =====================
+const MODELO_LEMBRETE = "lembrete_horario";
+const hhmm = (min: number) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+function diaExtenso(data: string) {
+  const d = new Date(`${data}T12:00:00Z`);
+  return `${DIAS[d.getUTCDay()]}, ${data.slice(8, 10)}/${data.slice(5, 7)}`;
+}
+const primeiroNome = (n: string) => String(n || "").trim().split(/\s+/)[0] || "tudo bem";
+
+async function conversaWhatsApp(admin: SupabaseClient, tel: string, nome?: string) {
+  let { data: conv } = await admin.from("conversas").select("id").eq("canal", "whatsapp").eq("telefone", tel).maybeSingle();
+  if (!conv) conv = (await admin.from("conversas").insert({ canal: "whatsapp", telefone: tel, nome: nome?.slice(0, 80) || null }).select("id").single()).data;
+  return conv;
+}
+
+async function enviarModeloLembrete(l: any): Promise<string | null> {
+  if (!usaYCloud()) return null;
+  const params = [primeiroNome(l.cliente_nome), diaExtenso(l.data), hhmm(l.inicio), l.servicos || "seu horário", primeiroNome(l.profissional || "a equipe")];
+  const r = await fetch("https://api.ycloud.com/v2/whatsapp/messages/sendDirectly", {
+    method: "POST",
+    headers: { "X-API-Key": Deno.env.get("YCLOUD_API_KEY")!, "content-type": "application/json" },
+    body: JSON.stringify({
+      from: Deno.env.get("YCLOUD_FROM"), to: e164(l.cliente_tel), type: "template",
+      template: {
+        name: MODELO_LEMBRETE, language: { code: "pt_BR" },
+        components: [
+          { type: "body", parameters: params.map((t) => ({ type: "text", text: String(t).slice(0, 60) })) },
+          { type: "button", sub_type: "quick_reply", index: "0", parameters: [{ type: "payload", payload: `conf:${l.id}` }] },
+          { type: "button", sub_type: "quick_reply", index: "1", parameters: [{ type: "payload", payload: `rem:${l.id}` }] },
+        ],
+      },
+    }),
+  });
+  const corpo = await r.text();
+  if (!r.ok) { console.error("Lembrete recusado", r.status, corpo.slice(0, 400)); return null; }
+  try { const j = JSON.parse(corpo); if (j.status === "failed") { console.error("Lembrete falhou", corpo.slice(0, 400)); return null; } return j.wamid || j.id || null; }
+  catch { return null; }
+}
+
+/** Manda os lembretes que venceram (auto) ou todos os de amanhã que faltam (manual). */
+async function processarLembretes(admin: SupabaseClient, modo: "auto" | "manual") {
+  const { data: cfg } = await admin.from("agente_config").select("numeros_teste").eq("id", 1).maybeSingle();
+  const tels = (cfg?.numeros_teste || []).map((n: string) => normalizarTelefone(n)).filter(Boolean);
+  const { data: lista, error } = await admin.rpc("lembretes_reservar", { p_modo: modo, p_tels: tels });
+  if (error) throw new Error(error.message);
+  let enviados = 0, falhas = 0;
+  for (const l of lista || []) {
+    const wamid = await enviarModeloLembrete(l);
+    if (!wamid) {
+      falhas++;
+      await admin.from("agendamentos").update({ lembrete_status: "falhou" }).eq("id", l.id);
+      continue;
+    }
+    enviados++;
+    await admin.from("agendamentos").update({ lembrete_status: "enviado", lembrete_wamid: wamid }).eq("id", l.id);
+    const conv = await conversaWhatsApp(admin, l.cliente_tel, l.cliente_nome);
+    if (conv) {
+      const texto = `Olá, ${primeiroNome(l.cliente_nome)}! Lembrete do seu horário na Seventh Day:\n📅 ${diaExtenso(l.data)} às ${hhmm(l.inicio)}\n✂️ ${l.servicos} com ${primeiroNome(l.profissional || "")}\nVocê confirma?`;
+      await admin.from("mensagens").insert({ conversa_id: conv.id, papel: "agente", texto, dados: { wa_out: wamid, lembrete: l.id, acoes: [] } });
+      await admin.from("conversas").update({ ultima_msg: new Date().toISOString() }).eq("id", conv.id);
+    }
+  }
+  return { enviados, falhas, total: (lista || []).length };
+}
+
+/** Cliente tocou em "Confirmo" ou "Preciso remarcar" no lembrete. */
+async function respostaDoLembrete(admin: SupabaseClient, tel: string, nome: string, payload: string, textoBotao: string, wamid: string) {
+  if (wamid) {
+    const { data: ja } = await admin.from("mensagens").select("id").contains("dados", { wa_msg_id: wamid }).limit(1);
+    if (ja?.length) return; // aviso repetido
+  }
+  let [acao, id] = String(payload || "").split(":");
+  if (!id) {
+    // sem payload: usa o lembrete mais recente deste número
+    acao = /remarc/i.test(textoBotao) ? "rem" : "conf";
+    const { data: ult } = await admin.from("agendamentos").select("id").eq("cliente_tel", tel).eq("status", "confirmado")
+      .in("lembrete_status", ["enviado", "confirmado", "remarcar"]).order("lembrete_em", { ascending: false }).limit(1);
+    id = ult?.[0]?.id;
+  }
+  const { data: ag } = id ? await admin.from("agendamentos").select("id,data,inicio,cliente_tel,status").eq("id", id).maybeSingle() : { data: null };
+  const meu = ag && ag.cliente_tel === tel && ag.status === "confirmado";
+  if (acao === "conf" && meu) {
+    await admin.from("agendamentos").update({ lembrete_status: "confirmado" }).eq("id", ag.id);
+    const conv = await conversaWhatsApp(admin, tel, nome);
+    const resp = `Combinado, ${primeiroNome(nome)}! Te esperamos ${diaExtenso(ag.data)} às ${hhmm(ag.inicio)}. 💈`;
+    if (conv) {
+      await admin.from("mensagens").insert({ conversa_id: conv.id, papel: "cliente", texto: textoBotao || "Confirmo", dados: { wa_msg_id: wamid } });
+      const env = await enviarTexto(tel, resp);
+      await admin.from("mensagens").insert({ conversa_id: conv.id, papel: "agente", texto: resp, dados: { wa_out: env, acoes: [] } });
+      await admin.from("conversas").update({ ultima_msg: new Date().toISOString() }).eq("id", conv.id);
+    }
+    return;
+  }
+  if (meu) await admin.from("agendamentos").update({ lembrete_status: "remarcar" }).eq("id", ag.id);
+  const pedido = meu ? `Preciso remarcar meu horário de ${diaExtenso(ag.data)} às ${hhmm(ag.inicio)}.` : (textoBotao || "Preciso remarcar meu horário.");
+  const r = await atender(admin, "whatsapp", tel, nome, pedido, wamid);
+  if (r.resposta) await marcarEnviada(admin, r.msgId, await enviarTexto(tel, r.resposta));
+}
+
 /** Resposta da equipe escrita no painel: vai pelo WhatsApp e o agente para de responder. */
 async function responderPeloPainel(admin: SupabaseClient, conversaId: string, texto: string) {
   const msg = String(texto || "").trim().slice(0, 4000);
@@ -557,6 +661,15 @@ Deno.serve(async (req) => {
   if (req.method === "GET" && url.searchParams.get("hub.mode") === "subscribe") {
     const ok = url.searchParams.get("hub.verify_token") && url.searchParams.get("hub.verify_token") === Deno.env.get("WHATSAPP_VERIFY_TOKEN");
     return ok ? new Response(url.searchParams.get("hub.challenge") || "", { status: 200 }) : new Response("Forbidden", { status: 403 });
+  }
+  // Rotina do banco (a cada 15 min): lembretes que venceram
+  const tokLemb = req.headers.get("x-lembrete-token");
+  if (req.method === "POST" && tokLemb) {
+    const adminL = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
+    const { data: seg } = await adminL.from("segredos_internos").select("valor").eq("nome", "lembretes").maybeSingle();
+    if (!seg?.valor || seg.valor.length !== tokLemb.length || seg.valor !== tokLemb) return new Response("Forbidden", { status: 403 });
+    try { return new Response(JSON.stringify(await processarLembretes(adminL, "auto")), { status: 200 }); }
+    catch (e) { console.error("Erro nos lembretes", e); return new Response("erro", { status: 500 }); }
   }
   // Avisos do YCloud: assinados com o segredo do webhook
   const assYC = req.headers.get("ycloud-signature");
@@ -596,10 +709,13 @@ Deno.serve(async (req) => {
     const { data: u } = await admin.auth.getUser(jwt);
     if (!u?.user) return new Response(JSON.stringify({ erro: "Entre no painel." }), { status: 401, headers: h });
     const { data: membro } = await admin.from("equipe").select("papel").eq("user_id", u.user.id).eq("ativo", true).maybeSingle();
+    const corpo = await req.json().catch(() => ({}));
+    if (corpo.acao === "lembretes_manual" && membro) {
+      return new Response(JSON.stringify(await processarLembretes(admin, "manual")), { headers: h });
+    }
     if (!membro || !["dono", "master"].includes(membro.papel)) {
       return new Response(JSON.stringify({ erro: "Só o dono pode usar o simulador." }), { status: 403, headers: h });
     }
-    const corpo = await req.json().catch(() => ({}));
     if (corpo.acao === "responder") {
       return new Response(JSON.stringify(await responderPeloPainel(admin, String(corpo.conversa_id || ""), String(corpo.texto || ""))), { headers: h });
     }

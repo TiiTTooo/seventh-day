@@ -210,6 +210,7 @@ async function renderAgenda() {
         ${v.cliente_tel ? `<div class="s">${fmtTel(v.cliente_tel)}</div>` : ""}
         ${v.status === "confirmado" && passou(v) ? `<div class="quick"><span>Já passou do horário:</span><button class="btn btn-sm qok" data-q="concluido" data-id="${v.id}">Atendido</button><button class="btn btn-sm qno" data-q="faltou" data-id="${v.id}">Faltou</button></div>` : ""}
         ${v.concluido_auto ? `<div class="s"><span class="tag">Confirmado automaticamente</span></div>` : ""}
+        ${v.status === "confirmado" && v.lembrete_status ? `<div class="s">${tagLembrete(v.lembrete_status)}</div>` : ""}
         ${AVS[v.id] ? `<div class="s"><span class="stars" aria-label="${AVS[v.id].nota} de 5">${"★".repeat(AVS[v.id].nota)}${"☆".repeat(5 - AVS[v.id].nota)}</span> avaliado pelo cliente</div>` : ""}
         <div class="row">
           <select data-st="${v.id}" aria-label="Situação">${[["confirmado", "Confirmado"], ["concluido", "Concluído"], ["faltou", "Faltou"], ["cancelado", "Cancelado"]].map(([val, l]) => `<option value="${val}" ${v.status === val ? "selected" : ""}>${l}</option>`).join("")}</select>
@@ -351,7 +352,7 @@ function avisoPermissao() {
 let CLI = [];
 const chave = a => a.cliente_tel || "nome:" + a.cliente_nome.trim().toLowerCase();
 async function renderClientes() {
-  const { data, error } = await sb.from("agendamentos").select("id,data,inicio,duracao,status,total,servicos,cliente_nome,cliente_tel,profissional_id,lembrete_em,origem,cliente_id").order("data", { ascending: false }).order("inicio", { ascending: false }).limit(5000);
+  const { data, error } = await sb.from("agendamentos").select("id,data,inicio,duracao,status,total,servicos,cliente_nome,cliente_tel,profissional_id,lembrete_em,lembrete_status,origem,cliente_id").order("data", { ascending: false }).order("inicio", { ascending: false }).limit(5000);
   if (error) return fail(error, "Erro ao carregar clientes.");
   const hoje = dkey(spNow()), amanha = (() => { const d = spNow(); d.setDate(d.getDate() + 1); return dkey(d); })();
   const mapa = new Map();
@@ -371,12 +372,14 @@ async function renderClientes() {
   }
   // lembretes de amanhã
   const lemb = (data || []).filter(a => a.data === amanha && a.status === "confirmado" && a.cliente_tel).sort((x, y) => x.inicio - y.inicio);
-  $("#lembretes").innerHTML = `<div class="card"><h3>Lembretes para amanhã</h3>${lemb.length ? lemb.map(a => {
+  $("#lembretes").innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><h3>Lembretes para amanhã</h3><button class="btn btn-dark btn-sm" id="lembAuto">Enviar lembretes de amanhã</button></div>
+    <p class="hint">O sistema já manda sozinho 24h antes de cada horário, com os botões Confirmo e Preciso remarcar. Use o botão se quiser mandar agora para quem ainda não recebeu.</p>${lemb.length ? lemb.map(a => {
     const p = EQUIPE.find(x => x.id === a.profissional_id), d = fromKey(a.data);
     const msg = `Olá ${a.cliente_nome.split(" ")[0]}! Passando para lembrar do seu horário na ${CFG.nome} amanhã, ${pad(d.getDate())}/${pad(d.getMonth() + 1)}, às ${fmtMin(a.inicio)}${p ? " com " + p.nome.split(" ")[0] : ""}. Se não puder vir, avise por aqui. Até lá!`;
     return `<div class="lrow ${a.lembrete_em ? "ok" : ""}"><span><b>${fmtMin(a.inicio)}</b> ${esc(a.cliente_nome)}${p ? " · " + esc(p.nome.split(" ")[0]) : ""}</span>
-      ${a.lembrete_em ? `<span class="tag ok">Lembrete enviado</span>` : `<a class="btn btn-dark btn-sm" target="_blank" rel="noopener" data-lemb="${a.id}" href="${waLink("55" + a.cliente_tel, msg)}">Enviar lembrete no WhatsApp</a>`}</div>`;
+      ${a.lembrete_status ? tagLembrete(a.lembrete_status) : a.lembrete_em ? `<span class="tag ok">Lembrete enviado</span>` : `<a class="btn btn-dark btn-sm" target="_blank" rel="noopener" data-lemb="${a.id}" href="${waLink("55" + a.cliente_tel, msg)}">Enviar lembrete no WhatsApp</a>`}</div>`;
   }).join("") : `<p class="hint">Nenhum horário confirmado para amanhã.</p>`}</div>`;
+  $("#lembAuto").onclick = e => enviarLembretesAmanha(e.currentTarget);
   $("#lembretes").querySelectorAll("[data-lemb]").forEach(b => b.addEventListener("click", async () => { await sb.from("agendamentos").update({ lembrete_em: new Date().toISOString() }).eq("id", b.dataset.lemb); setTimeout(renderClientes, 800); }));
   filtrarClientes();
 }
@@ -751,6 +754,29 @@ async function renderAvaliacoes() {
 }
 
 
+/* ---- lembretes automáticos ---- */
+function tagLembrete(st) {
+  return ({ enviando: `<span class="tag">Enviando lembrete…</span>`, enviado: `<span class="tag">Lembrete enviado, sem resposta</span>`,
+    confirmado: `<span class="tag ok">Cliente confirmou</span>`, remarcar: `<span class="tag lr">Pediu para remarcar</span>`,
+    falhou: `<span class="tag lr">Lembrete não chegou</span>` })[st] || "";
+}
+async function enviarLembretesAmanha(btn) {
+  btn.disabled = true; btn.textContent = "Enviando…";
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const r = await fetch(SD_CONFIG.url + "/functions/v1/agente", {
+      method: "POST",
+      headers: { "content-type": "application/json", apikey: SD_CONFIG.key, authorization: "Bearer " + session.access_token },
+      body: JSON.stringify({ acao: "lembretes_manual" }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.erro || "Falha ao enviar (" + r.status + ").");
+    toast(!j.total ? "Nenhum lembrete pendente para amanhã." : `${j.enviados} lembrete(s) enviado(s)${j.falhas ? `, ${j.falhas} não chegaram` : ""}.`);
+  } catch (e) { toast(e.message); }
+  btn.disabled = false; btn.textContent = "Enviar lembretes de amanhã";
+  renderClientes();
+}
+
 /* ===================== agente WhatsApp (simulador) ===================== */
 let agConv = null, agCanal = "simulador";
 const agFmtHora = iso => { const d = new Date(iso); return pad(d.getHours()) + ":" + pad(d.getMinutes()); };
@@ -918,6 +944,10 @@ async function renderDecisoes() {
         <textarea id="dcAss" rows="4" maxlength="1000">${esc((c.assuntos_equipe || []).join("\n"))}</textarea>
         <label for="dcHoras" style="margin-top:10px">Depois de passar para a equipe, o agente fica sem responder por (horas)</label>
         <input id="dcHoras" type="number" min="1" max="72" value="${c.horas_equipe}">
+        <label for="dcDizer" style="margin-top:10px">Dicas do que dizer (jeito de falar)</label>
+        <textarea id="dcDizer" rows="3" maxlength="2000" placeholder="Ex.: chamar o cliente de &quot;mano&quot; só se ele falar assim primeiro; lembrar que temos estacionamento na rua de trás; elogiar a escolha do corte.">${esc(c.dizer || "")}</textarea>
+        <label for="dcNaoDizer" style="margin-top:10px">O que o agente nunca deve dizer</label>
+        <textarea id="dcNaoDizer" rows="3" maxlength="2000" placeholder="Ex.: não falar de concorrentes; não prometer horário de chegada exato; não comentar sobre preço de produtos.">${esc(c.nao_dizer || "")}</textarea>
         <label for="dcInst" style="margin-top:10px">Instruções gerais (opcional)</label>
         <textarea id="dcInst" rows="3" maxlength="2000" placeholder="Ex.: chame o cliente pelo primeiro nome; sempre ofereça a barba junto com o corte.">${esc(c.instrucoes || "")}</textarea>
         <button class="btn btn-dark btn-sm" id="dcSalvar" style="margin-top:10px">Salvar decisões</button>
@@ -941,7 +971,7 @@ async function renderDecisoes() {
     const dias = [...box.querySelectorAll("[data-dia]")].filter(x => x.checked).map(x => +x.dataset.dia);
     if ($("#dcLim").checked && !dias.length) return toast("Escolha pelo menos um dia para o agente atender.");
     const numeros_teste = $("#dcTeste").value.split("\n").map(x => x.replace(/\D/g, "").replace(/^55(?=\d{10,11}$)/, "")).filter(x => x.length >= 10 && x.length <= 11).slice(0, 10);
-    const { error } = await sb.from("agente_config").update({ nome_agente: $("#dcNome").value.trim(), apresentacao: $("#dcApres").value.trim(), numeros_teste, horario_limitado: $("#dcLim").checked, hora_inicio: $("#dcIni").value || "08:00", hora_fim: $("#dcFim").value || "22:00", dias, mensagem_fora: $("#dcFora").value.trim(), ativo: $("#dcAtivo").checked, assuntos_equipe: assuntos, horas_equipe: Math.min(72, Math.max(1, +$("#dcHoras").value || 12)), instrucoes: $("#dcInst").value.trim(), atualizado: new Date().toISOString() }).eq("id", 1);
+    const { error } = await sb.from("agente_config").update({ dizer: $("#dcDizer").value.trim(), nao_dizer: $("#dcNaoDizer").value.trim(), nome_agente: $("#dcNome").value.trim(), apresentacao: $("#dcApres").value.trim(), numeros_teste, horario_limitado: $("#dcLim").checked, hora_inicio: $("#dcIni").value || "08:00", hora_fim: $("#dcFim").value || "22:00", dias, mensagem_fora: $("#dcFora").value.trim(), ativo: $("#dcAtivo").checked, assuntos_equipe: assuntos, horas_equipe: Math.min(72, Math.max(1, +$("#dcHoras").value || 12)), instrucoes: $("#dcInst").value.trim(), atualizado: new Date().toISOString() }).eq("id", 1);
     if (error) return fail(error); toast("Decisões salvas.");
   };
   $("#dcLim").onchange = () => $("#dcHorBox").classList.toggle("hidden", !$("#dcLim").checked);

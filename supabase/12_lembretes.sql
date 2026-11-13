@@ -1,0 +1,9 @@
+-- Lembretes automáticos no WhatsApp, 24h antes do horário, com botões Confirmo / Preciso remarcar.
+-- Aplicado no projeto como migração "lembretes_whatsapp". Ver o conteúdo completo nas migrações do Supabase.
+-- Resumo:
+--  * pg_net + tabela segredos_internos (token que só o banco e a função conhecem)
+--  * agendamentos: lembrete_em, lembrete_status (enviando|enviado|confirmado|remarcar|falhou), lembrete_wamid
+--  * lembretes_reservar(modo 'auto'|'manual', tels[]): reserva sem duplicar (for update skip locked)
+--  * cron 'lembretes_whatsapp' a cada 15 min chama a função agente com {"acao":"lembretes_auto"}
+--  * clientes com conta e aceite_lembretes = false não recebem
+-- Dicas do dono: agente_config.dizer / agente_config.nao_dizer (até 2000 caracteres cada)
