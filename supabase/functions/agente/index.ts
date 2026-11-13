@@ -322,8 +322,19 @@ export async function atender(admin: SupabaseClient, canal: "simulador" | "whats
     const { data: ja } = await admin.from("mensagens").select("id").eq("conversa_id", conv.id).contains("dados", { wa_msg_id: waMsgId }).limit(1);
     if (ja?.length) return { resposta: null, humano: false, duplicada: true, acoes: [] };
   }
+  // Atendimento novo: cliente voltou depois de 6h, ou depois de 15 min de um atendimento que terminou
+  // (horário marcado ou cancelado). A conversa anterior fica no histórico, mas o Seven começa do zero.
+  const inicioSessao = conv.sessao_inicio || "1970-01-01T00:00:00Z";
+  const { data: ultimas } = await admin.from("mensagens").select("papel,dados,criado").eq("conversa_id", conv.id)
+    .gte("criado", inicioSessao).order("criado", { ascending: false }).limit(40);
+  const ultimaEm = ultimas?.[0] ? new Date(ultimas[0].criado).getTime() : 0;
+  const parado = Date.now() - ultimaEm;
+  const terminou = (ultimas || []).some((m: any) => (m.dados?.acoes || []).some((a: any) => a.tipo === "agendou" || a.tipo === "cancelou"));
+  const sessaoNova = !ultimas?.length || parado > 6 * 3600 * 1000 || (terminou && parado > 15 * 60 * 1000);
+  const agoraIso = new Date().toISOString();
   await admin.from("mensagens").insert({ conversa_id: conv.id, papel: "cliente", texto: msg, dados: waMsgId ? { wa_msg_id: waMsgId } : null });
-  await admin.from("conversas").update({ ultima_msg: new Date().toISOString(), ...(nome ? { nome: nome.slice(0, 80) } : {}) }).eq("id", conv.id);
+  await admin.from("conversas").update({ ultima_msg: agoraIso, ...(sessaoNova ? { sessao_inicio: agoraIso } : {}), ...(nome ? { nome: nome.slice(0, 80) } : {}) }).eq("id", conv.id);
+  const desde = sessaoNova ? agoraIso : inicioSessao;
 
   if (conv.humano_ate && new Date(conv.humano_ate) > new Date()) return { resposta: null, humano: true, acoes: [] };
 
@@ -338,7 +349,7 @@ export async function atender(admin: SupabaseClient, canal: "simulador" | "whats
     admin.from("config").select("*").eq("id", 1).single(),
     admin.from("servicos").select("id,categoria,nome,preco,duracao,obs").eq("ativo", true).order("ordem"),
     admin.from("equipe").select("id,nome,descricao").eq("ativo", true).eq("atende", true).order("ordem"),
-    admin.from("mensagens").select("id,papel,texto,dados,criado").eq("conversa_id", conv.id).order("criado", { ascending: false }).limit(30),
+    admin.from("mensagens").select("id,papel,texto,dados,criado").eq("conversa_id", conv.id).gte("criado", desde).order("criado", { ascending: false }).limit(30),
     admin.from("agente_config").select("*").eq("id", 1).maybeSingle(),
     admin.from("agente_regras").select("quando,resposta").eq("ativo", true).order("criado").limit(60),
   ]);
@@ -363,10 +374,18 @@ export async function atender(admin: SupabaseClient, canal: "simulador" | "whats
     profCod: new Map((equipe || []).map((p: any, i: number) => [`P${i + 1}`, p])),
     acoes: [], horasEquipe: agCfg?.horas_equipe || 12,
   };
-  // Primeira resposta da conversa, ou o cliente voltou depois de 12 horas sem falar com o agente
-  const dozeHoras = Date.now() - 12 * 3600 * 1000;
-  const primeira = !(hist || []).some((m: any) => m.papel !== "cliente" && new Date(m.criado).getTime() > dozeHoras);
-  const sistema = montarSistema(cfg, servicos || [], equipe || [], ctx, agCfg, regras || [], primeira);
+  // Primeira resposta do atendimento
+  const primeira = sessaoNova || !(hist || []).some((m: any) => m.papel !== "cliente");
+  // Com texto de apresentação do dono, ele vai exatamente como foi escrito (com emojis);
+  // se o cliente só cumprimentou, a apresentação é a resposta inteira.
+  const apresDono = primeira ? String(agCfg?.apresentacao || "").trim() : "";
+  const soCumprimento = /^(oi+|ol[aá]|opa|e a[ií]|eae|salve|bom dia|boa tarde|boa noite|hey|hello|tudo bem\??)[\s!.,?]*$/i.test(msg);
+  if (apresDono && soCumprimento) {
+    const { data: salvaA } = await admin.from("mensagens").insert({ conversa_id: conv.id, papel: "agente", texto: apresDono.slice(0, 4000), dados: { acoes: [], apresentacao: true } }).select("id").single();
+    return { resposta: apresDono, humano: false, msgId: salvaA?.id, acoes: [] };
+  }
+  const sistema = montarSistema(cfg, servicos || [], equipe || [], ctx, agCfg, regras || [], primeira && !apresDono)
+    + (apresDono ? "\n\nA apresentação do dono já vai junto antes da sua resposta: não se apresente de novo, responda direto ao pedido do cliente." : "");
   const mensagens: any[] = historicoParaClaude((hist || []).reverse());
 
   let resposta = "";
@@ -389,6 +408,7 @@ export async function atender(admin: SupabaseClient, canal: "simulador" | "whats
   }
   if (!resposta) resposta = "Desculpe, não entendi. Pode repetir?";
   resposta = quebrarFrases(resposta);
+  if (apresDono) resposta = apresDono + "\n\n" + resposta;
 
   const { data: salva } = await admin.from("mensagens").insert({
     conversa_id: conv.id, papel: "agente", texto: resposta.slice(0, 4000),
