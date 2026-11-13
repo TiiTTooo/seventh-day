@@ -1,0 +1,6 @@
+-- Agenda da equipe no WhatsApp (aplicado como migração "avisos_agenda_equipe")
+--  * equipe.whatsapp (privado: sem grant de leitura para anon/authenticated) e equipe.avisos
+--  * resumos_enviados: um resumo da noite por profissional por dia
+--  * trigger agend_avisar_equipe: horário de hoje/amanhã marcado, remarcado ou cancelado
+--    chama a função agente (acao aviso_mudanca) via pg_net; nunca bloqueia o agendamento
+-- Modelos no YCloud: agenda_amanha (21h) e aviso_agenda (na hora)

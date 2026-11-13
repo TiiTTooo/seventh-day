@@ -638,6 +638,80 @@ async function respostaDoLembrete(admin: SupabaseClient, tel: string, nome: stri
   if (r.resposta) await marcarEnviada(admin, r.msgId, await enviarTexto(tel, r.resposta));
 }
 
+// ===================== Agenda da equipe no WhatsApp =====================
+async function enviarModelo(nome: string, tel: string, params: string[]): Promise<string | null> {
+  if (!usaYCloud()) return null;
+  if (e164(tel) === Deno.env.get("YCLOUD_FROM")) return null; // o número da barbearia não manda para ele mesmo
+  const r = await fetch("https://api.ycloud.com/v2/whatsapp/messages/sendDirectly", {
+    method: "POST",
+    headers: { "X-API-Key": Deno.env.get("YCLOUD_API_KEY")!, "content-type": "application/json" },
+    body: JSON.stringify({
+      from: Deno.env.get("YCLOUD_FROM"), to: e164(tel), type: "template",
+      template: { name: nome, language: { code: "pt_BR" }, components: [{ type: "body", parameters: params.map((t) => ({ type: "text", text: t })) }] },
+    }),
+  });
+  const corpo = await r.text();
+  if (!r.ok) { console.error(`Modelo ${nome} recusado`, r.status, corpo.slice(0, 400)); return null; }
+  try { const j = JSON.parse(corpo); if (j.status === "failed") { console.error(`Modelo ${nome} falhou`, corpo.slice(0, 400)); return null; } return j.wamid || j.id || null; }
+  catch { return null; }
+}
+// Parâmetro de modelo não aceita quebra de linha nem espaços seguidos
+const umaLinha = (t: string, max = 900) => String(t || "").replace(/\s+/g, " ").trim().slice(0, max);
+
+/** Às 21h, cada profissional com WhatsApp recebe a agenda do dia seguinte. */
+async function enviarResumosDaNoite(admin: SupabaseClient) {
+  const ag = agoraSP();
+  if (ag.hora < "21:00" || ag.hora >= "23:00") return 0;
+  const amanha = somarDias(ag.data, 1);
+  const [{ data: cfg }, { data: equipe }, { data: lista }] = await Promise.all([
+    admin.from("config").select("horarios").eq("id", 1).single(),
+    admin.from("equipe").select("id,nome,whatsapp,avisos").eq("ativo", true).eq("atende", true).not("whatsapp", "is", null),
+    admin.from("agendamentos").select("inicio,cliente_nome,servicos,profissional_id").eq("data", amanha).eq("status", "confirmado").eq("teste", false).order("inicio"),
+  ]);
+  const dow = new Date(`${amanha}T12:00:00Z`).getUTCDay();
+  const abre = Array.isArray(cfg?.horarios?.[String(dow)]);
+  let n = 0;
+  for (const p of equipe || []) {
+    if (!p.avisos) continue;
+    const meus = (lista || []).filter((a: any) => a.profissional_id === p.id);
+    if (!meus.length && !abre) continue; // salão fechado e nada marcado: não incomoda
+    // reserva o envio (um por dia por pessoa, mesmo se a rotina rodar duas vezes)
+    const { data: res } = await admin.from("resumos_enviados").upsert({ data: amanha, profissional_id: p.id }, { onConflict: "data,profissional_id", ignoreDuplicates: true }).select();
+    if (!res?.length) continue;
+    const itens = meus.map((a: any) => `${hhmm(a.inicio)} ${primeiroNome(a.cliente_nome)} (${(a.servicos || []).map((s: any) => s.nome).join(" + ")})`);
+    let texto = itens.join(" • ");
+    if (texto.length > 900) { const corte = itens.findIndex((_, i) => itens.slice(0, i + 1).join(" • ").length > 850); texto = itens.slice(0, corte).join(" • ") + ` • e mais ${itens.length - corte}`; }
+    if (!texto) texto = "nenhum horário marcado até agora";
+    const ok = await enviarModelo("agenda_amanha", p.whatsapp, [primeiroNome(p.nome), `${diaExtenso(amanha)}, ${meus.length} horário${meus.length === 1 ? "" : "s"}`, umaLinha(texto)]);
+    if (ok) n++; else await admin.from("resumos_enviados").delete().eq("data", amanha).eq("profissional_id", p.id);
+  }
+  return n;
+}
+
+/** Aviso na hora quando um horário de hoje ou amanhã é marcado, remarcado ou cancelado. */
+async function avisarMudanca(admin: SupabaseClient, corpo: any) {
+  const { data: a } = await admin.from("agendamentos").select("id,data,inicio,cliente_nome,servicos,profissional_id,teste").eq("id", corpo.id).maybeSingle();
+  if (!a || a.teste) return;
+  const avisar = async (profId: string, rotulo: string, data: string, inicio: number) => {
+    const { data: p } = await admin.from("equipe").select("nome,whatsapp,avisos,user_id").eq("id", profId).maybeSingle();
+    if (!p?.whatsapp || !p.avisos) return;
+    if (corpo.por && p.user_id === corpo.por) return; // foi ele mesmo que mexeu
+    const quando = data === agoraSP().data ? `hoje (${diaExtenso(data)})` : `amanhã (${diaExtenso(data)})`;
+    await enviarModelo("aviso_agenda", p.whatsapp, [umaLinha(rotulo, 120), umaLinha(quando, 60), hhmm(inicio),
+      umaLinha(a.cliente_nome, 60), umaLinha((a.servicos || []).map((s: any) => s.nome).join(" + "), 120)]);
+  };
+  const hoje = agoraSP().data, amanha = somarDias(hoje, 1);
+  const perto = (d: string) => d === hoje || d === amanha;
+  if (corpo.tipo === "novo" && perto(a.data)) return avisar(a.profissional_id, "novo horário marcado", a.data, a.inicio);
+  if (corpo.tipo === "cancelado" && perto(a.data)) return avisar(a.profissional_id, "horário cancelado", a.data, a.inicio);
+  if (corpo.tipo === "remarcado") {
+    const ant = corpo.antigo || {};
+    const mesmoProf = ant.profissional_id === a.profissional_id;
+    if (perto(a.data)) await avisar(a.profissional_id, mesmoProf ? `horário remarcado (era ${diaExtenso(ant.data)} às ${hhmm(ant.inicio)})` : "novo horário na sua agenda", a.data, a.inicio);
+    if (!mesmoProf && ant.profissional_id && perto(ant.data)) await avisar(ant.profissional_id, "horário saiu da sua agenda (passou para outro profissional)", ant.data, ant.inicio);
+  }
+}
+
 /** Resposta da equipe escrita no painel: vai pelo WhatsApp e o agente para de responder. */
 async function responderPeloPainel(admin: SupabaseClient, conversaId: string, texto: string) {
   const msg = String(texto || "").trim().slice(0, 4000);
@@ -668,8 +742,13 @@ Deno.serve(async (req) => {
     const adminL = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
     const { data: seg } = await adminL.from("segredos_internos").select("valor").eq("nome", "lembretes").maybeSingle();
     if (!seg?.valor || seg.valor.length !== tokLemb.length || seg.valor !== tokLemb) return new Response("Forbidden", { status: 403 });
-    try { return new Response(JSON.stringify(await processarLembretes(adminL, "auto")), { status: 200 }); }
-    catch (e) { console.error("Erro nos lembretes", e); return new Response("erro", { status: 500 }); }
+    const corpoL = await req.json().catch(() => ({}));
+    try {
+      if (corpoL.acao === "aviso_mudanca") { await avisarMudanca(adminL, corpoL); return new Response("ok", { status: 200 }); }
+      const lemb = await processarLembretes(adminL, "auto");
+      const resumos = await enviarResumosDaNoite(adminL);
+      return new Response(JSON.stringify({ ...lemb, resumos }), { status: 200 });
+    } catch (e) { console.error("Erro na rotina", e); return new Response("erro", { status: 500 }); }
   }
   // Avisos do YCloud: assinados com o segredo do webhook
   const assYC = req.headers.get("ycloud-signature");

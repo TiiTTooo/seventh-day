@@ -578,6 +578,8 @@ async function renderEquipe() {
     <label>Descrição no site</label><input data-f="descricao" value="${esc(p.descricao || "")}">
     <label>E-mail de acesso ao painel</label><input data-f="email" type="email" value="${esc(p.email || "")}" placeholder="sem acesso ao painel">
     <label>Usuário para entrar (opcional)</label><input data-f="usuario" value="${esc(p.usuario || "")}" placeholder="ex.: roque" autocapitalize="none" spellcheck="false" maxlength="30">
+    <label>WhatsApp para receber a agenda</label><input data-f="whatsapp" inputmode="tel" maxlength="15" value="${esc(p.whatsapp ? fmtTel(p.whatsapp) : "")}" placeholder="(11) 99999-9999">
+    <label class="sw"><input type="checkbox" data-f="avisos" ${p.avisos !== false ? "checked" : ""}> Receber a agenda de amanhã às 21h e avisos de mudança de última hora</label>
     <label>Tipo de acesso</label><select data-f="papel" ${p.id === EU.id || (p.papel === "master" && !MASTER) ? "disabled" : ""}>${papelOpts(p.papel)}</select>
     <label class="sw" style="margin-top:12px"><input type="checkbox" data-f="atende" ${p.atende ? "checked" : ""}> Atende clientes (aparece no site e na agenda)</label>
     <label class="sw"><input type="checkbox" data-f="ativo" ${p.ativo ? "checked" : ""} ${p.id === EU.id ? "disabled" : ""}> Ativo na equipe</label>
@@ -590,7 +592,9 @@ async function renderEquipe() {
       const email = v("email").value.trim().toLowerCase() || null;
       const usuario = v("usuario").value.trim().toLowerCase() || null;
       if (usuario && !/^[a-z0-9._]{3,30}$/.test(usuario)) return toast("Usuário: 3 a 30 caracteres, só letras minúsculas sem acento, números, ponto e sublinhado.");
-      const upd = { nome: v("nome").value.trim(), descricao: v("descricao").value.trim() || null, email, usuario, atende: v("atende").checked };
+      const wa = v("whatsapp").value.replace(/\D/g, "").replace(/^55(?=\d{10,11}$)/, "") || null;
+      if (wa && !/^\d{10,11}$/.test(wa)) return toast("WhatsApp com DDD, ex.: (11) 99999-9999.");
+      const upd = { nome: v("nome").value.trim(), descricao: v("descricao").value.trim() || null, email, usuario, atende: v("atende").checked, whatsapp: wa, avisos: v("avisos").checked };
       if (id !== EU.id) { upd.papel = v("papel").value; upd.ativo = v("ativo").checked; }
       if (email !== (p.email || null) && p.user_id) upd.user_id = null; // e-mail trocado: acesso precisa ser refeito
       if (!upd.nome) return toast("Digite o nome.");
