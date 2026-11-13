@@ -216,6 +216,8 @@ FORMATO DAS MENSAGENS (siga sempre):
 Depois da lista, diga em uma linha: "Responda com o número da opção."
 - Serviços e cortes: um por linha, com preço e, se ajudar, a duração. Nunca junte vários serviços na mesma linha.
 - No máximo 6 opções por lista; se houver mais, mostre as mais procuradas e ofereça "ver mais".
+- Cada opção é um texto curto (no WhatsApp elas viram botões): nome curto primeiro e detalhes depois de " – ", ex.: "Corte masculino – R$ 45,00 (30 min)". Para sim ou não, use "1 - Sim" e "2 - Não".
+- A lista de opções vem sempre por último na mensagem.
 - Se o cliente responder só com um número, ele escolheu a opção com esse número da sua última mensagem. Se o número não existir na lista, peça para escolher de novo.
 
 AGORA: ${ag.data} (${DIAS[ag.dow]}), ${ag.hora}, horário de São Paulo.
@@ -381,8 +383,10 @@ export async function atender(admin: SupabaseClient, canal: "simulador" | "whats
   const apresDono = primeira ? String(agCfg?.apresentacao || "").trim() : "";
   const soCumprimento = /^(oi+|ol[aá]|opa|e a[ií]|eae|salve|bom dia|boa tarde|boa noite|hey|hello|tudo bem\??)[\s!.,?]*$/i.test(msg);
   if (apresDono && soCumprimento) {
-    const { data: salvaA } = await admin.from("mensagens").insert({ conversa_id: conv.id, papel: "agente", texto: apresDono.slice(0, 4000), dados: { acoes: [], apresentacao: true } }).select("id").single();
-    return { resposta: apresDono, humano: false, msgId: salvaA?.id, acoes: [] };
+    // Menu inicial: no WhatsApp vira 3 botões; no simulador aparece numerado
+    const comMenu = `${apresDono}\n1 - Agendar horário\n2 - Meus horários\n3 - Tirar dúvida`;
+    const { data: salvaA } = await admin.from("mensagens").insert({ conversa_id: conv.id, papel: "agente", texto: comMenu.slice(0, 4000), dados: { acoes: [], apresentacao: true } }).select("id").single();
+    return { resposta: comMenu, humano: false, msgId: salvaA?.id, acoes: [] };
   }
   const sistema = montarSistema(cfg, servicos || [], equipe || [], ctx, agCfg, regras || [], primeira && !apresDono)
     + (apresDono ? "\n\nA apresentação do dono já vai junto antes da sua resposta: não se apresente de novo, responda direto ao pedido do cliente." : "");
@@ -510,6 +514,52 @@ async function enviarTexto(telefone: string, texto: string): Promise<string | nu
   catch { return null; }
 }
 
+/** Transforma a lista numerada da resposta em botões (até 3) ou lista de opções (até 10) do WhatsApp. */
+function paraInterativo(texto: string) {
+  const linhas = texto.split("\n");
+  const re = /^\s*(\d{1,2})\s*[-–.)]\s+(.+)$/;
+  let fim = -1, ini = -1;
+  for (let i = linhas.length - 1; i >= 0; i--) {
+    if (re.test(linhas[i])) { if (fim < 0) fim = i; ini = i; }
+    else if (fim >= 0 && !/^\s*$/.test(linhas[i])) break;
+  }
+  if (fim < 0) return null;
+  const opcoes = linhas.slice(ini, fim + 1).filter((l) => re.test(l)).map((l) => l.match(re)![2].trim());
+  if (opcoes.length < 2 || opcoes.length > 10) return null;
+  const corpo = [...linhas.slice(0, ini), ...linhas.slice(fim + 1)]
+    .filter((l) => !/responda (só |apenas )?com o n[uú]mero/i.test(l)).join("\n").replace(/\n{3,}/g, "\n\n").trim() || "Escolha uma opção:";
+  if (corpo.length > 1000) return null;
+  const curtas = opcoes.every((o) => o.length <= 20);
+  if (opcoes.length <= 3 && curtas) {
+    return { type: "button", body: { text: corpo }, action: { buttons: opcoes.map((o, i) => ({ type: "reply", reply: { id: `opt:${i + 1}`, title: o } })) } };
+  }
+  const rows = opcoes.map((o, i) => {
+    const [tit, ...resto] = o.split(/\s[–-]\s/);
+    let title = tit.trim(), description = resto.join(" – ").trim();
+    if (title.length > 24) { description = (title.slice(24) + (description ? " – " + description : "")).trim(); title = title.slice(0, 23) + "…"; }
+    return { id: `opt:${i + 1}`, title, ...(description ? { description: description.slice(0, 72) } : {}) };
+  });
+  return { type: "list", body: { text: corpo }, action: { button: "Ver opções", sections: [{ title: "Opções", rows }] } };
+}
+
+/** Envia a resposta do Seven: com botões/lista quando houver opções numeradas; senão, texto. */
+async function enviarResposta(telefone: string, texto: string): Promise<string | null> {
+  const inter = usaYCloud() ? paraInterativo(texto) : null;
+  if (inter) {
+    const r = await fetch("https://api.ycloud.com/v2/whatsapp/messages/sendDirectly", {
+      method: "POST",
+      headers: { "X-API-Key": Deno.env.get("YCLOUD_API_KEY")!, "content-type": "application/json" },
+      body: JSON.stringify({ from: Deno.env.get("YCLOUD_FROM"), to: e164(telefone), type: "interactive", interactive: inter }),
+    });
+    const corpo = await r.text();
+    if (r.ok) {
+      try { const j = JSON.parse(corpo); if (j.status !== "failed") return j.wamid || j.id || null; } catch { /* cai no texto */ }
+    }
+    console.error("Botões recusados, mandando como texto", r.status, corpo.slice(0, 300));
+  }
+  return enviarTexto(telefone, texto);
+}
+
 async function marcarEnviada(admin: SupabaseClient, msgId: number | undefined, wamid: string | null) {
   if (!msgId || !wamid) return;
   const { data } = await admin.from("mensagens").select("dados").eq("id", msgId).single();
@@ -530,7 +580,15 @@ async function processarYCloud(admin: SupabaseClient, ev: any) {
     if (!(await permitido(admin, tel)).ok) return; // fora da lista de teste: nem grava
     const nome = m.customerProfile?.name || "";
     try {
-      const botao = m.button || m.interactive?.button_reply;
+      const escolha = m.interactive?.button_reply || m.interactive?.list_reply;
+      if (m.type === "interactive" && escolha && String(escolha.id || "").startsWith("opt:")) {
+        // Cliente tocou numa opção do Seven: segue a conversa como se tivesse digitado a opção
+        const textoEscolha = `${escolha.id.slice(4)} - ${escolha.title}${escolha.description ? " – " + escolha.description : ""}`;
+        const r = await atender(admin, "whatsapp", tel, nome, textoEscolha, m.wamid || m.id);
+        if (r.resposta) await marcarEnviada(admin, r.msgId, await enviarResposta(tel, r.resposta));
+        return;
+      }
+      const botao = m.button || escolha;
       if (m.type === "button" || m.type === "interactive" && botao) {
         await respostaDoLembrete(admin, tel, nome, botao?.payload || botao?.id || "", botao?.text || botao?.title || "", m.wamid || m.id);
         return;
@@ -541,7 +599,7 @@ async function processarYCloud(admin: SupabaseClient, ev: any) {
         return;
       }
       const r = await atender(admin, "whatsapp", tel, nome, m.text?.body || "", m.wamid || m.id);
-      if (r.resposta) await marcarEnviada(admin, r.msgId, await enviarTexto(tel, r.resposta));
+      if (r.resposta) await marcarEnviada(admin, r.msgId, await enviarResposta(tel, r.resposta));
     } catch (e) { console.error("Erro ao atender mensagem do YCloud", e); }
     return;
   }
@@ -673,7 +731,7 @@ async function respostaDoLembrete(admin: SupabaseClient, tel: string, nome: stri
   if (meu) await admin.from("agendamentos").update({ lembrete_status: "remarcar" }).eq("id", ag.id);
   const pedido = meu ? `Preciso remarcar meu horário de ${diaExtenso(ag.data)} às ${hhmm(ag.inicio)}.` : (textoBotao || "Preciso remarcar meu horário.");
   const r = await atender(admin, "whatsapp", tel, nome, pedido, wamid);
-  if (r.resposta) await marcarEnviada(admin, r.msgId, await enviarTexto(tel, r.resposta));
+  if (r.resposta) await marcarEnviada(admin, r.msgId, await enviarResposta(tel, r.resposta));
 }
 
 // ===================== Agenda da equipe no WhatsApp =====================
