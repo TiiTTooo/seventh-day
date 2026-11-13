@@ -193,11 +193,22 @@ function montarSistema(cfg: any, servicos: any[], equipe: any[], ctx: Ctx, agCfg
   const apresentacao = primeira
     ? `\nAPRESENTAÇÃO: esta é a primeira resposta nesta conversa (ou o cliente voltou depois de muito tempo). Comece se apresentando em uma frase curta e calorosa: ${nomeAg ? "seu nome, " : ""}que você é o assistente virtual da barbearia e que pode ajudar a agendar, remarcar ou cancelar horários e tirar dúvidas sobre serviços, preços e horários. Depois pergunte como pode ajudar. Se o cliente já trouxe um pedido nesta mensagem, apresente-se em meia frase e já resolva o pedido.${agCfg?.apresentacao ? " Use como base o texto do dono: " + agCfg.apresentacao : ""}\n`
     : `\nNão se apresente de novo nesta conversa; você já se apresentou.\n`;
-  const prox = Array.from({ length: 8 }, (_, i) => {
+  // Dias que dá para agendar, calculados aqui (o modelo não decide se o salão está aberto)
+  const paraMin = (t: string) => { const [h, m] = String(t).split(":").map(Number); return h * 60 + m; };
+  const agoraMin = paraMin(ag.hora);
+  const prox = Array.from({ length: Math.min(Number(cfg.dias_abertos) || 14, 10) + 1 }, (_, i) => {
     const d = somarDias(ag.data, i);
     const dow = new Date(`${d}T12:00:00Z`).getUTCDay();
-    return `${d} (${DIAS[dow]}${i === 0 ? ", hoje" : i === 1 ? ", amanhã" : ""})`;
-  }).join("; ");
+    const nomeDia = `${DIAS[dow]} ${d.slice(8, 10)}/${d.slice(5, 7)}${i === 0 ? " (hoje)" : i === 1 ? " (amanhã)" : ""}`;
+    const h = cfg.horarios?.[String(dow)];
+    if (!Array.isArray(h)) return `- ${nomeDia}: FECHADO`;
+    if (i === 0) {
+      const primeiro = Math.max(paraMin(h[0]), agoraMin + (Number(cfg.antecedencia) || 0));
+      if (primeiro + 30 > paraMin(h[1])) return `- ${nomeDia}: JÁ ENCERROU o atendimento de hoje (não ofereça hoje)`;
+      return `- ${nomeDia}: aberto até ${h[1]}, dá para marcar a partir de ${String(Math.floor(primeiro / 60)).padStart(2, "0")}:${String(primeiro % 60).padStart(2, "0")}`;
+    }
+    return `- ${nomeDia}: aberto das ${h[0]} às ${h[1]}`;
+  }).join("\n");
   const horarios = [1, 2, 3, 4, 5, 6, 0].map((d) => {
     const h = cfg.horarios?.[String(d)];
     return `${DIAS[d]}: ${Array.isArray(h) ? `${h[0]} às ${h[1]}` : "fechado"}`;
@@ -210,6 +221,9 @@ function montarSistema(cfg: any, servicos: any[], equipe: any[], ctx: Ctx, agCfg
 
 FORMATO DAS MENSAGENS (siga sempre):
 - Cada frase em uma linha própria: depois de ponto final, exclamação ou interrogação, comece uma linha nova.
+- Faça no máximo 2 perguntas por mensagem. Quando fizer mais de uma pergunta, ou listar avisos e informações (que não são opções para escolher), coloque cada uma numa linha começando com "・ ", ex.:
+・ Qual dia fica melhor pra você?
+・ Tem preferência de profissional?
 - Sempre que o cliente tiver que escolher (serviço, dia, horário, profissional, sim ou não), numere as opções, uma por linha, assim:
 1 - Corte masculino – R$ 45,00
 2 - Corte + barba – R$ 70,00
@@ -222,7 +236,9 @@ Depois da lista, diga em uma linha: "Responda com o número da opção."
 - Se o cliente responder só com um número, ele escolheu a opção com esse número da sua última mensagem. Se o número não existir na lista, peça para escolher de novo.
 
 AGORA: ${ag.data} (${DIAS[ag.dow]}), ${ag.hora}, horário de São Paulo.
-Próximos dias: ${prox}.
+DIAS PARA AGENDAR (fonte da verdade; siga à risca):
+${prox}
+Nunca ofereça um dia FECHADO nem hoje quando já encerrou. Ao sugerir dias, ofereça só os abertos desta lista, e confirme os horários sempre com horarios_livres antes de oferecer.
 ${apresentacao}
 DADOS DA BARBEARIA (use só estes; nunca invente):
 Endereço: ${cfg.endereco || "não informado"}
