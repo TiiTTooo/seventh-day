@@ -215,7 +215,8 @@ FORMATO DAS MENSAGENS (siga sempre):
 2 - Corte + barba – R$ 70,00
 Depois da lista, diga em uma linha: "Responda com o número da opção."
 - Serviços e cortes: um por linha, com preço e, se ajudar, a duração. Nunca junte vários serviços na mesma linha.
-- No máximo 6 opções por lista; se houver mais, mostre as mais procuradas e ofereça "ver mais".
+- Quando o cliente quer agendar e ainda não disse o serviço, mostre primeiro as CATEGORIAS da lista de serviços (todas elas), uma por opção, com nome curto de até 24 letras (ex.: "Tratamentos e química femininos" vira "Tratamentos femininos"). Depois que ele escolher a categoria, mostre TODOS os serviços dela, um por opção, com preço e duração. Se o cliente já disse o serviço, pule as categorias.
+- No máximo 10 opções por lista.
 - Cada opção é um texto curto (no WhatsApp elas viram botões): nome curto primeiro e detalhes depois de " – ", ex.: "Corte masculino – R$ 45,00 (30 min)". Para sim ou não, use "1 - Sim" e "2 - Não".
 - A lista de opções vem sempre por último na mensagem.
 - Se o cliente responder só com um número, ele escolheu a opção com esse número da sua última mensagem. Se o número não existir na lista, peça para escolher de novo.
@@ -536,7 +537,15 @@ function paraInterativo(texto: string) {
   const rows = opcoes.map((o, i) => {
     const [tit, ...resto] = o.split(/\s[–-]\s/);
     let title = tit.trim(), description = resto.join(" – ").trim();
-    if (title.length > 24) { description = (title.slice(24) + (description ? " – " + description : "")).trim(); title = title.slice(0, 23) + "…"; }
+    const junta = (extra: string) => { description = (extra + (description ? " – " + description : "")).trim(); };
+    // Título do WhatsApp tem até 24 letras: o que está entre parênteses vai para a descrição
+    if (title.length > 24 && title.includes(" (")) { const k = title.indexOf(" ("); junta(title.slice(k + 1)); title = title.slice(0, k); }
+    // Ainda grande: título encurtado com "…" e o nome completo na descrição
+    if (title.length > 24) {
+      const palavras = title.split(" "); let t = "";
+      while (palavras.length && (t + (t ? " " : "") + palavras[0]).length <= 23) t += (t ? " " : "") + palavras.shift();
+      junta(title); title = (t || title.slice(0, 23)) + "…";
+    }
     return { id: `opt:${i + 1}`, title, ...(description ? { description: description.slice(0, 72) } : {}) };
   });
   return { type: "list", body: { text: corpo }, action: { button: "Ver opções", sections: [{ title: "Opções", rows }] } };
