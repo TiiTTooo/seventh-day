@@ -196,7 +196,7 @@ function montarSistema(cfg: any, servicos: any[], equipe: any[], ctx: Ctx, agCfg
   // Dias que dá para agendar, calculados aqui (o modelo não decide se o salão está aberto)
   const paraMin = (t: string) => { const [h, m] = String(t).split(":").map(Number); return h * 60 + m; };
   const agoraMin = paraMin(ag.hora);
-  const prox = Array.from({ length: Math.min(Number(cfg.dias_abertos) || 14, 10) + 1 }, (_, i) => {
+  const prox = Array.from({ length: Math.min(Number(cfg.dias_abertos) || 14, 60) + 1 }, (_, i) => {
     const d = somarDias(ag.data, i);
     const dow = new Date(`${d}T12:00:00Z`).getUTCDay();
     const nomeDia = `${DIAS[dow]} ${d.slice(8, 10)}/${d.slice(5, 7)}${i === 0 ? " (hoje)" : i === 1 ? " (amanhã)" : ""}`;
@@ -231,6 +231,7 @@ Depois da lista, diga em uma linha: "Responda com o número da opção."
 - Serviços e cortes: um por linha, com preço e, se ajudar, a duração. Nunca junte vários serviços na mesma linha.
 - Quando o cliente quer agendar e ainda não disse o serviço, mostre primeiro as CATEGORIAS da lista de serviços (todas elas), uma por opção, com nome curto de até 24 letras (ex.: "Tratamentos e química femininos" vira "Tratamentos femininos"). Depois que ele escolher a categoria, mostre TODOS os serviços dela, um por opção, com preço e duração. Se o cliente já disse o serviço, pule as categorias.
 - No máximo 10 opções por lista.
+- Ao oferecer dias para agendar, mostre no máximo os 6 próximos dias abertos e coloque SEMPRE como última opção "Outra data – escolher um dia mais pra frente". Se o cliente escolher essa opção, peça para ele escrever o dia (ex.: 28/11) e confira na lista DIAS PARA AGENDAR se está aberto.
 - Cada opção é um texto curto (no WhatsApp elas viram botões): nome curto primeiro e detalhes depois de " – ", ex.: "Corte masculino – R$ 45,00 (30 min)". Para sim ou não, use "1 - Sim" e "2 - Não".
 - A lista de opções vem sempre por último na mensagem.
 - Se o cliente responder só com um número, ele escolheu a opção com esse número da sua última mensagem. Se o número não existir na lista, peça para escolher de novo.
@@ -238,7 +239,7 @@ Depois da lista, diga em uma linha: "Responda com o número da opção."
 AGORA: ${ag.data} (${DIAS[ag.dow]}), ${ag.hora}, horário de São Paulo.
 DIAS PARA AGENDAR (fonte da verdade; siga à risca):
 ${prox}
-Nunca ofereça um dia FECHADO nem hoje quando já encerrou. Ao sugerir dias, ofereça só os abertos desta lista, e confirme os horários sempre com horarios_livres antes de oferecer.
+Nunca ofereça um dia FECHADO nem hoje quando já encerrou. Se o cliente pedir um dia depois do último desta lista, explique que a agenda abre com até ${cfg.dias_abertos} dias de antecedência e ofereça o dia aberto mais distante. Ao sugerir dias, ofereça só os abertos desta lista, e confirme os horários sempre com horarios_livres antes de oferecer.
 ${apresentacao}
 DADOS DA BARBEARIA (use só estes; nunca invente):
 Endereço: ${cfg.endereco || "não informado"}
