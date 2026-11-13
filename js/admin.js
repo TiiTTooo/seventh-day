@@ -779,8 +779,9 @@ async function agCarregar() {
   const tel = agTelAtual();
   const { data: c } = await sb.from("conversas").select("*").eq("canal", agCanal).eq("telefone", tel).maybeSingle();
   const real = agCanal === "whatsapp";
-  $("#agForm").classList.toggle("hidden", real);
-  $("#agTelTopo").textContent = real ? $("#agTel").value + " · conversa real do WhatsApp (só leitura)" : $("#agTel").value;
+  $("#agForm").classList.toggle("hidden", real && !c);
+  $("#agTexto").placeholder = real ? "Responder como equipe (vai pelo WhatsApp e pausa o agente)…" : "Digite como o cliente escreveria…";
+  $("#agTelTopo").textContent = real ? $("#agTel").value + " · conversa real do WhatsApp" : $("#agTel").value;
   agConv = c || null;
   const box = $("#agMsgs");
   if (!c) { box.innerHTML = `<div class="agvazio">Escreva como um cliente: "oi, quanto é o corte?", "tem horário amanhã à tarde?", "quero cancelar meu horário".</div>`; $("#agHumano").classList.add("hidden"); return; }
@@ -792,13 +793,14 @@ async function agCarregar() {
   const hum = c.humano_ate && new Date(c.humano_ate) > new Date();
   $("#agHumano").classList.toggle("hidden", !hum);
   if (hum) {
-    $("#agHumano").innerHTML = `<span>O agente passou esta conversa para a equipe${c.motivo_humano ? ": " + esc(c.motivo_humano) : ""}. Ele não responde até alguém devolver.</span><button class="btn btn-sm" id="agDevolver">Devolver para o agente</button>`;
+    $("#agHumano").innerHTML = `<span>${c.motivo_humano ? "O agente passou esta conversa para a equipe: " + esc(c.motivo_humano) + "." : "A equipe está respondendo esta conversa."} O agente não responde até alguém devolver (ou até ${agFmtHora(c.humano_ate)}).</span><button class="btn btn-sm" id="agDevolver">Devolver para o agente</button>`;
     $("#agDevolver").onclick = async () => { const { error } = await sb.from("conversas").update({ humano_ate: null, motivo_humano: null }).eq("id", c.id); if (error) return fail(error); toast("O agente voltou a responder."); agCarregar(); agListar(); };
   }
 }
 let agMsgsCache = [];
 function agBolha(m, i) {
-  const lado = m.papel === "cliente" ? "cli" : "bot";
+  const lado = m.papel === "cliente" ? "cli" : m.papel === "equipe" ? "bot eq" : "bot";
+  if (m.papel === "equipe") return `<div class="agb ${lado}"><small class="agquem">Equipe${m.dados?.origem === "celular" ? " · pelo celular" : m.dados?.origem === "painel" ? " · pelo painel" : ""}</small><div>${agWa(m.texto)}</div><time>${agFmtHora(m.criado)}</time></div>`;
   const fer = (m.dados?.acoes || []).filter(a => a.tipo === "ferramenta");
   const det = fer.length ? `<details class="agdet"><summary>${fer.length} consulta(s) à agenda</summary>${fer.map(a => `<div><b>${esc(a.nome)}</b> ${esc(JSON.stringify(a.entrada))}<br><span>${esc(a.saida)}</span></div>`).join("")}</details>` : "";
   const cor = lado === "bot" && i !== undefined ? `<button class="agcor" data-cor="${i}">Corrigir esta resposta</button>` : "";
@@ -807,6 +809,7 @@ function agBolha(m, i) {
 $("#agForm").onsubmit = async ev => {
   ev.preventDefault();
   const texto = $("#agTexto").value.trim(); if (!texto) return;
+  if (agCanal === "whatsapp") return agResponderEquipe(texto);
   const tel = agTelAtual(); if (tel.length < 10 || tel.length > 11) return toast("Coloque um WhatsApp com DDD para o cliente de teste.");
   const box = $("#agMsgs");
   if (box.querySelector(".agvazio")) box.innerHTML = "";
@@ -830,6 +833,23 @@ $("#agForm").onsubmit = async ev => {
   $("#agEnviar").disabled = false; $("#agTexto").focus();
   await agCarregar(); agListar();
 };
+async function agResponderEquipe(texto) {
+  if (!agConv) return;
+  $("#agEnviar").disabled = true;
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const r = await fetch(SD_CONFIG.url + "/functions/v1/agente", {
+      method: "POST",
+      headers: { "content-type": "application/json", apikey: SD_CONFIG.key, authorization: "Bearer " + session.access_token },
+      body: JSON.stringify({ acao: "responder", conversa_id: agConv.id, texto }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.erro || "Falha ao enviar (" + r.status + ").");
+    $("#agTexto").value = ""; toast("Enviado. O agente fica pausado nesta conversa.");
+  } catch (e) { toast(e.message); }
+  $("#agEnviar").disabled = false;
+  await agCarregar(); agListar();
+}
 $("#agNova").onclick = () => { agCanal = "simulador"; $("#agTel").value = "119" + String(Math.floor(10000000 + Math.random() * 89999999)); $("#agNome").value = ""; renderAgente(); };
 ["agTel", "agNome"].forEach(id => $("#" + id).addEventListener("change", () => { agCanal = "simulador"; renderAgente(); }));
 $("#agLimpar").onclick = () => confirmar("Apagar todos os testes do agente?", "Apaga as conversas do simulador e os horários marcados por ele (os que têm a etiqueta teste). Conversas reais do WhatsApp não são afetadas.", "Apagar testes", async () => {
@@ -886,6 +906,9 @@ async function renderDecisoes() {
             <textarea id="dcFora" rows="2" maxlength="500" placeholder="Ex.: Oi! Nosso atendimento automático volta às 8h. Para agendar agora, use o site: seventh-day-glgv.vercel.app">${esc(c.mensagem_fora || "")}</textarea>
           </div>
         </div>
+        <label for="dcTeste" style="margin-top:12px">Números de teste no WhatsApp (um por linha, com DDD)</label>
+        <textarea id="dcTeste" rows="2" maxlength="300" placeholder="11999998888">${esc((c.numeros_teste || []).join("\n"))}</textarea>
+        <p class="hint">Preenchido, o agente só atende esses números e ignora todo o resto (nem grava). Deixe vazio para atender todo mundo.</p>
         <label for="dcAss" style="margin-top:12px">Assuntos que vão para a equipe (um por linha)</label>
         <textarea id="dcAss" rows="4" maxlength="1000">${esc((c.assuntos_equipe || []).join("\n"))}</textarea>
         <label for="dcHoras" style="margin-top:10px">Depois de passar para a equipe, o agente fica sem responder por (horas)</label>
@@ -912,7 +935,8 @@ async function renderDecisoes() {
     const assuntos = $("#dcAss").value.split("\n").map(x => x.trim()).filter(Boolean).slice(0, 20);
     const dias = [...box.querySelectorAll("[data-dia]")].filter(x => x.checked).map(x => +x.dataset.dia);
     if ($("#dcLim").checked && !dias.length) return toast("Escolha pelo menos um dia para o agente atender.");
-    const { error } = await sb.from("agente_config").update({ horario_limitado: $("#dcLim").checked, hora_inicio: $("#dcIni").value || "08:00", hora_fim: $("#dcFim").value || "22:00", dias, mensagem_fora: $("#dcFora").value.trim(), ativo: $("#dcAtivo").checked, assuntos_equipe: assuntos, horas_equipe: Math.min(72, Math.max(1, +$("#dcHoras").value || 12)), instrucoes: $("#dcInst").value.trim(), atualizado: new Date().toISOString() }).eq("id", 1);
+    const numeros_teste = $("#dcTeste").value.split("\n").map(x => x.replace(/\D/g, "").replace(/^55(?=\d{10,11}$)/, "")).filter(x => x.length >= 10 && x.length <= 11).slice(0, 10);
+    const { error } = await sb.from("agente_config").update({ numeros_teste, horario_limitado: $("#dcLim").checked, hora_inicio: $("#dcIni").value || "08:00", hora_fim: $("#dcFim").value || "22:00", dias, mensagem_fora: $("#dcFora").value.trim(), ativo: $("#dcAtivo").checked, assuntos_equipe: assuntos, horas_equipe: Math.min(72, Math.max(1, +$("#dcHoras").value || 12)), instrucoes: $("#dcInst").value.trim(), atualizado: new Date().toISOString() }).eq("id", 1);
     if (error) return fail(error); toast("Decisões salvas.");
   };
   $("#dcLim").onchange = () => $("#dcHorBox").classList.toggle("hidden", !$("#dcLim").checked);
@@ -955,7 +979,7 @@ function ouvirEquipe() {
   sb.channel("convs").on("postgres_changes", { event: "*", schema: "public", table: "conversas" }, p => {
     const c = p.new; if (!c || !c.id) return;
     atualizarBadgeAgente();
-    if (!$("#tab-agente").classList.contains("hidden")) agListar();
+    if (!$("#tab-agente").classList.contains("hidden")) { agListar(); if (agConv && agConv.id === c.id) agCarregar(); }
     if (!c.humano_ate || new Date(c.humano_ate) <= new Date() || !c.motivo_humano) return;
     const k = c.id + c.humano_ate; if (avisadas.has(k)) return; avisadas.add(k);
     bip();

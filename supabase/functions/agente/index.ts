@@ -1,4 +1,4 @@
-// Agente de atendimento da Seventh Day (simulador do painel; depois, WhatsApp)
+// Agente de atendimento da Seventh Day (simulador do painel e WhatsApp, via YCloud ou Meta)
 // Recebe a mensagem do cliente, conversa com o Claude usando ferramentas de agenda
 // e devolve a resposta. Tudo que mexe na agenda passa pelas funções do banco,
 // que aplicam as mesmas regras do site.
@@ -364,12 +364,12 @@ export async function atender(admin: SupabaseClient, canal: "simulador" | "whats
   }
   if (!resposta) resposta = "Desculpe, não entendi. Pode repetir?";
 
-  await admin.from("mensagens").insert({
+  const { data: salva } = await admin.from("mensagens").insert({
     conversa_id: conv.id, papel: "agente", texto: resposta.slice(0, 4000),
     dados: { acoes: ctx.acoes, tokens: { entrada: entradaTokens, saida: saidaTokens }, modelo: MODELO },
-  });
+  }).select("id").single();
   const humano = ctx.acoes.some((a) => a.tipo === "chamou_equipe");
-  return { resposta, humano, acoes: ctx.acoes, tokens: { entrada: entradaTokens, saida: saidaTokens } };
+  return { resposta, humano, msgId: salva?.id, acoes: ctx.acoes, tokens: { entrada: entradaTokens, saida: saidaTokens } };
 }
 
 // ===================== WhatsApp (API oficial da Meta) =====================
@@ -429,12 +429,138 @@ async function processarWebhook(admin: SupabaseClient, payload: any) {
   }
 }
 
+// ===================== WhatsApp via YCloud (coexistência) =====================
+// O mesmo número funciona no app do celular e aqui. O que a equipe manda pelo celular
+// chega como "eco": a conversa vai para a equipe e o agente para de responder.
+const usaYCloud = () => !!Deno.env.get("YCLOUD_API_KEY");
+const e164 = (tel: string) => "+" + (tel.length <= 11 ? "55" + tel : tel);
+
+async function assinaturaYCloudValida(corpo: string, cabecalho: string | null) {
+  const segredo = Deno.env.get("YCLOUD_WEBHOOK_SECRET");
+  if (!segredo || !cabecalho) return false;
+  const t = cabecalho.match(/t=(\d+)/)?.[1], s = cabecalho.match(/s=([a-fA-F0-9]{64})/)?.[1];
+  if (!t || !s) return false;
+  if (Math.abs(Date.now() / 1000 - Number(t)) > 300) return false; // aviso velho: recusa
+  const chave = await crypto.subtle.importKey("raw", enc.encode(segredo), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", chave, enc.encode(`${t}.${corpo}`)));
+  const esperado = Array.from(sig).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const recebido = s.toLowerCase();
+  let dif = 0;
+  for (let i = 0; i < esperado.length; i++) dif |= esperado.charCodeAt(i) ^ recebido.charCodeAt(i);
+  return dif === 0;
+}
+
+/** Envia pelo provedor configurado. Devolve o wamid quando o envio foi aceito. */
+async function enviarTexto(telefone: string, texto: string): Promise<string | null> {
+  if (!usaYCloud()) { await enviarWhatsApp(telefone.length <= 11 ? "55" + telefone : telefone, texto); return null; }
+  const r = await fetch("https://api.ycloud.com/v2/whatsapp/messages/sendDirectly", {
+    method: "POST",
+    headers: { "X-API-Key": Deno.env.get("YCLOUD_API_KEY")!, "content-type": "application/json" },
+    body: JSON.stringify({ from: Deno.env.get("YCLOUD_FROM"), to: e164(telefone), type: "text", text: { body: texto.slice(0, 4000) } }),
+  });
+  const corpo = await r.text();
+  if (!r.ok) { console.error("YCloud recusou o envio", r.status, corpo.slice(0, 400)); return null; }
+  try { const j = JSON.parse(corpo); if (j.status === "failed") console.error("YCloud: envio falhou", corpo.slice(0, 400)); return j.wamid || j.id || null; }
+  catch { return null; }
+}
+
+async function marcarEnviada(admin: SupabaseClient, msgId: number | undefined, wamid: string | null) {
+  if (!msgId || !wamid) return;
+  const { data } = await admin.from("mensagens").select("dados").eq("id", msgId).single();
+  await admin.from("mensagens").update({ dados: { ...(data?.dados || {}), wa_out: wamid } }).eq("id", msgId);
+}
+
+async function permitido(admin: SupabaseClient, telefone: string) {
+  const { data } = await admin.from("agente_config").select("numeros_teste,horas_equipe").eq("id", 1).maybeSingle();
+  const lista = (data?.numeros_teste || []).map((n: string) => normalizarTelefone(n)).filter(Boolean);
+  return { ok: !lista.length || lista.includes(telefone), horas: data?.horas_equipe || 12 };
+}
+
+async function processarYCloud(admin: SupabaseClient, ev: any) {
+  const tipo = ev?.type;
+  if (tipo === "whatsapp.inbound_message.received") {
+    const m = ev.whatsappInboundMessage || ev.whatsappMessage || {};
+    const tel = normalizarTelefone(String(m.from || ""));
+    if (!(await permitido(admin, tel)).ok) return; // fora da lista de teste: nem grava
+    const nome = m.customerProfile?.name || "";
+    try {
+      if (m.type !== "text") {
+        const id = await enviarTexto(tel, "Por enquanto eu só entendo mensagens de texto. Pode escrever o que você precisa?");
+        if (!id) console.error("Não consegui responder mensagem não-texto");
+        return;
+      }
+      const r = await atender(admin, "whatsapp", tel, nome, m.text?.body || "", m.wamid || m.id);
+      if (r.resposta) await marcarEnviada(admin, r.msgId, await enviarTexto(tel, r.resposta));
+    } catch (e) { console.error("Erro ao atender mensagem do YCloud", e); }
+    return;
+  }
+  if (tipo === "whatsapp.echo_message.created") {
+    // Mensagem que a equipe mandou pelo app do celular
+    const m = ev.whatsappMessage || {};
+    const wamid = m.wamid || m.id || "";
+    if (wamid) {
+      const { data: nossa } = await admin.from("mensagens").select("id").contains("dados", { wa_out: wamid }).limit(1);
+      if (nossa?.length) return; // fomos nós que mandamos
+    }
+    const tel = normalizarTelefone(String(m.to || ""));
+    const perm = await permitido(admin, tel);
+    if (!perm.ok || tel.length < 10 || tel.length > 11) return;
+    const texto = m.type === "text" ? String(m.text?.body || "") : `[${m.type || "mídia"} enviada pelo celular]`;
+    let { data: conv } = await admin.from("conversas").select("id").eq("canal", "whatsapp").eq("telefone", tel).maybeSingle();
+    if (!conv) conv = (await admin.from("conversas").insert({ canal: "whatsapp", telefone: tel }).select("id").single()).data;
+    if (!conv) return;
+    if (wamid) {
+      const { data: ja } = await admin.from("mensagens").select("id").eq("conversa_id", conv.id).contains("dados", { wa_msg_id: wamid }).limit(1);
+      if (ja?.length) return;
+    }
+    await admin.from("mensagens").insert({ conversa_id: conv.id, papel: "equipe", texto: texto.slice(0, 4000), dados: { wa_msg_id: wamid, origem: "celular" } });
+    await admin.from("conversas").update({
+      ultima_msg: new Date().toISOString(), motivo_humano: null,
+      humano_ate: new Date(Date.now() + perm.horas * 3600 * 1000).toISOString(),
+    }).eq("id", conv.id);
+    return;
+  }
+  if (tipo === "whatsapp.message.updated" || tipo === "whatsapp.echo_message.updated") {
+    const m = ev.whatsappMessage || {};
+    if (m.status === "failed") console.error("WhatsApp não entregou", m.errorCode, m.errorMessage);
+  }
+}
+
+/** Resposta da equipe escrita no painel: vai pelo WhatsApp e o agente para de responder. */
+async function responderPeloPainel(admin: SupabaseClient, conversaId: string, texto: string) {
+  const msg = String(texto || "").trim().slice(0, 4000);
+  if (!msg) throw new Error("Mensagem vazia.");
+  const { data: conv } = await admin.from("conversas").select("id,canal,telefone").eq("id", conversaId).maybeSingle();
+  if (!conv || conv.canal !== "whatsapp") throw new Error("Conversa não encontrada.");
+  const wamid = await enviarTexto(conv.telefone, msg);
+  if (usaYCloud() && !wamid) throw new Error("O WhatsApp não aceitou o envio. Tente de novo.");
+  const { horas } = await permitido(admin, conv.telefone);
+  await admin.from("mensagens").insert({ conversa_id: conv.id, papel: "equipe", texto: msg, dados: { wa_out: wamid, origem: "painel" } });
+  await admin.from("conversas").update({
+    ultima_msg: new Date().toISOString(), motivo_humano: null,
+    humano_ate: new Date(Date.now() + horas * 3600 * 1000).toISOString(),
+  }).eq("id", conv.id);
+  return { ok: true };
+}
+
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   // Verificação do webhook pela Meta (feita uma vez, ao configurar)
   if (req.method === "GET" && url.searchParams.get("hub.mode") === "subscribe") {
     const ok = url.searchParams.get("hub.verify_token") && url.searchParams.get("hub.verify_token") === Deno.env.get("WHATSAPP_VERIFY_TOKEN");
     return ok ? new Response(url.searchParams.get("hub.challenge") || "", { status: 200 }) : new Response("Forbidden", { status: 403 });
+  }
+  // Avisos do YCloud: assinados com o segredo do webhook
+  const assYC = req.headers.get("ycloud-signature");
+  if (req.method === "POST" && assYC) {
+    const corpo = await req.text();
+    if (!(await assinaturaYCloudValida(corpo, assYC))) return new Response("Forbidden", { status: 403 });
+    let ev: any = null;
+    try { ev = JSON.parse(corpo); } catch { return new Response("ok", { status: 200 }); }
+    const adminYC = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
+    // @ts-ignore EdgeRuntime existe no Supabase
+    EdgeRuntime.waitUntil(processarYCloud(adminYC, ev));
+    return new Response("ok", { status: 200 });
   }
   // Mensagens que chegam do WhatsApp: assinadas pela Meta
   const assinatura = req.headers.get("x-hub-signature-256");
@@ -466,6 +592,9 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ erro: "Só o dono pode usar o simulador." }), { status: 403, headers: h });
     }
     const corpo = await req.json().catch(() => ({}));
+    if (corpo.acao === "responder") {
+      return new Response(JSON.stringify(await responderPeloPainel(admin, String(corpo.conversa_id || ""), String(corpo.texto || ""))), { headers: h });
+    }
     const r = await atender(admin, "simulador", String(corpo.telefone || ""), String(corpo.nome || ""), String(corpo.texto || ""));
     return new Response(JSON.stringify(r), { headers: h });
   } catch (e) {
