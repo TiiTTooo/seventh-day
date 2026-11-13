@@ -145,8 +145,11 @@ async function executar(nome: string, entrada: any, ctx: Ctx): Promise<string> {
       const nomeCod = (id: string) => { const e = [...ctx.profCod.entries()].find(([, p]) => p.id === id); return e ? `${e[0]} ${e[1].nome.split(" ")[0]}` : "?"; };
       const porHora = new Map<string, string[]>();
       for (const r of data) porHora.set(r.hora, [...(porHora.get(r.hora) || []), nomeCod(r.profissional_id)]);
-      return `Horários livres em ${entrada.data} (horário – quem pode atender):\n` +
-        [...porHora.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([hh, ps]) => `${hh} – ${ps.join(", ")}`).join("\n");
+      const horas = [...porHora.keys()].sort();
+      const per = { manha: horas.filter((x) => x < "12:00").length, tarde: horas.filter((x) => x >= "12:00" && x < "18:00").length, noite: horas.filter((x) => x >= "18:00").length };
+      const resumo = [per.manha ? `Manhã (antes das 12h): ${per.manha}` : "", per.tarde ? `Tarde (12h às 18h): ${per.tarde}` : "", per.noite ? `Noite (depois das 18h): ${per.noite}` : ""].filter(Boolean).join(" | ");
+      return `Horários livres em ${entrada.data}: ${horas.length} no total. Períodos com horário livre: ${resumo}. (Período que não aparece aqui está lotado: não ofereça.)\n(horário – quem pode atender):\n` +
+        horas.map((hh) => `${hh} – ${porHora.get(hh)!.join(", ")}`).join("\n");
     }
     if (nome === "agendar") {
       const [h, m] = String(entrada.hora || "").split(":").map(Number);
@@ -259,7 +262,7 @@ CLIENTE DESTA CONVERSA: WhatsApp ${ctx.telefone}${ctx.nomeCliente ? `, nome no W
 COMO AGENDAR:
 1. Descubra o serviço (confirme se for ambíguo, ex.: "corte" pode ser vários; ofereça os mais comuns com preço).
 2. Pergunte o dia e se tem preferência de profissional.
-3. Use horarios_livres e ofereça no máximo 4 opções, as mais próximas do que o cliente pediu e em sequência (ex.: pediu "depois das 14h" → 14:00, 14:30, 15:00…).
+3. Use horarios_livres. Se o cliente já disse o período ou a hora (ex.: "depois das 14h"), ofereça até 9 horários livres a partir dali, em sequência. Se não disse e houver mais de 9 horários livres no dia, pergunte primeiro o período, com uma opção para cada período que tem horário livre (só os que aparecem em "Períodos com horário livre", ex.: "1 - Manhã – 4 horários", "2 - Tarde – 10 horários"); depois mostre até 9 horários daquele período e, se sobrarem outros períodos com vaga, coloque como última opção "Outro período". Se houver até 9 horários no dia, mostre todos.
    Se o cliente não tem preferência de profissional, escolha você o profissional do horário e não pergunte de novo.
 4. Pergunte o nome, se ainda não souber.
 5. Resuma (serviço, dia da semana e data, hora, profissional, preço) e peça confirmação.
@@ -315,10 +318,18 @@ async function chamarClaude(chave: string, sistema: string, mensagens: any[]) {
 }
 
 /** Uma frase por linha: quebra depois de . ! ? (não mexe em "1 - ", números, preços nem links). */
+const ABREVIACOES = new Set(["r", "av", "al", "rod", "trav", "est", "pça", "praça", "dr", "dra", "sr", "sra", "srta", "prof", "profa", "n", "nº", "no", "num", "apto", "ap", "bl", "cj", "lt", "qd", "km", "jd", "vl", "pq", "res", "ed", "s", "sto", "sta", "obs", "ex", "etc", "aprox", "min", "seg", "ter", "qua", "qui", "sex", "sáb", "sab", "dom"]);
 function quebrarFrases(t: string) {
-  return t.split("\n").map((linha) =>
-    linha.replace(/([^\d\s.][.!?]+)[ \t]+(?=[^\s\d(])/g, "$1\n")
-  ).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  // Quebra só quando a próxima frase começa com letra maiúscula (ou *negrito*).
+  // Emoji depois do ponto fica na mesma linha; abreviações (R., Av., Dr.) não quebram.
+  return t.split("\n").map((linha) => {
+    const marcador = linha.startsWith("・") ? "・ " : "";
+    return linha.replace(/(\S+)([.!?]+)[ \t]+(?=\*?[A-ZÁÉÍÓÚÂÊÔÃÕÀÇ])/g, (tudo, palavra: string, pont: string) => {
+      const limpa = palavra.replace(/^[*_(\[]+/, "").toLowerCase();
+      if (pont === "." && (ABREVIACOES.has(limpa) || /^[a-zà-ú]$/i.test(limpa) || /\d$/.test(limpa))) return tudo;
+      return `${palavra}${pont}\n${marcador}`;
+    });
+  }).join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /** Processa uma mensagem do cliente e devolve a resposta do agente (ou null se a equipe assumiu). */
