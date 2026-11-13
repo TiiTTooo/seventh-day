@@ -186,8 +186,13 @@ async function executar(nome: string, entrada: any, ctx: Ctx): Promise<string> {
   }
 }
 
-function montarSistema(cfg: any, servicos: any[], equipe: any[], ctx: Ctx, agCfg: any, regras: any[]) {
+function montarSistema(cfg: any, servicos: any[], equipe: any[], ctx: Ctx, agCfg: any, regras: any[], primeira: boolean) {
   const ag = agoraSP();
+  const nomeAg = String(agCfg?.nome_agente || "").trim();
+  const quem = nomeAg ? `Seu nome é ${nomeAg}. Você é o assistente virtual` : "Você é o assistente virtual";
+  const apresentacao = primeira
+    ? `\nAPRESENTAÇÃO: esta é a primeira resposta nesta conversa (ou o cliente voltou depois de muito tempo). Comece se apresentando em uma frase curta e calorosa: ${nomeAg ? "seu nome, " : ""}que você é o assistente virtual da barbearia e que pode ajudar a agendar, remarcar ou cancelar horários e tirar dúvidas sobre serviços, preços e horários. Depois pergunte como pode ajudar. Se o cliente já trouxe um pedido nesta mensagem, apresente-se em meia frase e já resolva o pedido.${agCfg?.apresentacao ? " Use como base o texto do dono: " + agCfg.apresentacao : ""}\n`
+    : `\nNão se apresente de novo nesta conversa; você já se apresentou.\n`;
   const prox = Array.from({ length: 8 }, (_, i) => {
     const d = somarDias(ag.data, i);
     const dow = new Date(`${d}T12:00:00Z`).getUTCDay();
@@ -201,11 +206,11 @@ function montarSistema(cfg: any, servicos: any[], equipe: any[], ctx: Ctx, agCfg
     `S${i + 1} | ${s.categoria ? s.categoria + " – " : ""}${s.nome} | ${brl(s.preco)} | ${s.duracao} min${s.obs ? " | " + s.obs : ""}`).join("\n");
   const listaProf = equipe.map((p, i) => `P${i + 1} | ${p.nome}${p.descricao ? " – " + p.descricao : ""}`).join("\n");
 
-  return `Você é o atendente virtual da ${cfg.nome_completo} no WhatsApp. Atende clientes em português do Brasil, com simpatia e frases curtas, como uma pessoa da barbearia escreveria no WhatsApp. Pode usar *negrito* do WhatsApp com moderação. Não use listas longas nem markdown de títulos. Uma ou duas mensagens curtas por vez.
+  return `${quem} da ${cfg.nome_completo} no WhatsApp. Nunca finja ser uma pessoa: se perguntarem, diga que é um assistente virtual e que a equipe pode assumir quando precisar. Atende clientes em português do Brasil, com simpatia e frases curtas, como uma pessoa da barbearia escreveria no WhatsApp. Pode usar *negrito* do WhatsApp com moderação. Não use listas longas nem markdown de títulos. Uma ou duas mensagens curtas por vez.
 
 AGORA: ${ag.data} (${DIAS[ag.dow]}), ${ag.hora}, horário de São Paulo.
 Próximos dias: ${prox}.
-
+${apresentacao}
 DADOS DA BARBEARIA (use só estes; nunca invente):
 Endereço: ${cfg.endereco || "não informado"}
 Horário de funcionamento: ${horarios}
@@ -341,7 +346,10 @@ export async function atender(admin: SupabaseClient, canal: "simulador" | "whats
     profCod: new Map((equipe || []).map((p: any, i: number) => [`P${i + 1}`, p])),
     acoes: [], horasEquipe: agCfg?.horas_equipe || 12,
   };
-  const sistema = montarSistema(cfg, servicos || [], equipe || [], ctx, agCfg, regras || []);
+  // Primeira resposta da conversa, ou o cliente voltou depois de 12 horas sem falar com o agente
+  const dozeHoras = Date.now() - 12 * 3600 * 1000;
+  const primeira = !(hist || []).some((m: any) => m.papel !== "cliente" && new Date(m.criado).getTime() > dozeHoras);
+  const sistema = montarSistema(cfg, servicos || [], equipe || [], ctx, agCfg, regras || [], primeira);
   const mensagens: any[] = historicoParaClaude((hist || []).reverse());
 
   let resposta = "";

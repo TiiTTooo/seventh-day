@@ -896,6 +896,11 @@ async function renderDecisoes() {
       <div>
         <label class="sw"><input type="checkbox" id="dcAtivo" ${c.ativo ? "checked" : ""}> Agente ligado</label>
         <p class="hint">Desligado, ele não responde ninguém; as mensagens ficam para a equipe.</p>
+        <label for="dcNome" style="margin-top:10px">Nome do agente</label>
+        <input id="dcNome" maxlength="40" value="${esc(c.nome_agente || "")}" placeholder="Ex.: Sétimo">
+        <label for="dcApres" style="margin-top:10px">Apresentação na primeira mensagem (opcional)</label>
+        <textarea id="dcApres" rows="2" maxlength="500" placeholder="Ex.: Oi! Eu sou o Sétimo, assistente virtual da Seventh Day. Posso marcar, remarcar ou cancelar seu horário e tirar dúvidas de preços.">${esc(c.apresentacao || "")}</textarea>
+        <p class="hint">Vazio, o agente se apresenta com as próprias palavras. Ele sempre diz que é um assistente virtual.</p>
         <div class="dchor">
           <label class="sw"><input type="checkbox" id="dcLim" ${c.horario_limitado ? "checked" : ""}> Responder só em alguns horários</label>
           <div id="dcHorBox" class="${c.horario_limitado ? "" : "hidden"}">
@@ -936,7 +941,7 @@ async function renderDecisoes() {
     const dias = [...box.querySelectorAll("[data-dia]")].filter(x => x.checked).map(x => +x.dataset.dia);
     if ($("#dcLim").checked && !dias.length) return toast("Escolha pelo menos um dia para o agente atender.");
     const numeros_teste = $("#dcTeste").value.split("\n").map(x => x.replace(/\D/g, "").replace(/^55(?=\d{10,11}$)/, "")).filter(x => x.length >= 10 && x.length <= 11).slice(0, 10);
-    const { error } = await sb.from("agente_config").update({ numeros_teste, horario_limitado: $("#dcLim").checked, hora_inicio: $("#dcIni").value || "08:00", hora_fim: $("#dcFim").value || "22:00", dias, mensagem_fora: $("#dcFora").value.trim(), ativo: $("#dcAtivo").checked, assuntos_equipe: assuntos, horas_equipe: Math.min(72, Math.max(1, +$("#dcHoras").value || 12)), instrucoes: $("#dcInst").value.trim(), atualizado: new Date().toISOString() }).eq("id", 1);
+    const { error } = await sb.from("agente_config").update({ nome_agente: $("#dcNome").value.trim(), apresentacao: $("#dcApres").value.trim(), numeros_teste, horario_limitado: $("#dcLim").checked, hora_inicio: $("#dcIni").value || "08:00", hora_fim: $("#dcFim").value || "22:00", dias, mensagem_fora: $("#dcFora").value.trim(), ativo: $("#dcAtivo").checked, assuntos_equipe: assuntos, horas_equipe: Math.min(72, Math.max(1, +$("#dcHoras").value || 12)), instrucoes: $("#dcInst").value.trim(), atualizado: new Date().toISOString() }).eq("id", 1);
     if (error) return fail(error); toast("Decisões salvas.");
   };
   $("#dcLim").onchange = () => $("#dcHorBox").classList.toggle("hidden", !$("#dcLim").checked);
