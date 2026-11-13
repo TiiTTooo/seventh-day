@@ -206,7 +206,17 @@ function montarSistema(cfg: any, servicos: any[], equipe: any[], ctx: Ctx, agCfg
     `S${i + 1} | ${s.categoria ? s.categoria + " – " : ""}${s.nome} | ${brl(s.preco)} | ${s.duracao} min${s.obs ? " | " + s.obs : ""}`).join("\n");
   const listaProf = equipe.map((p, i) => `P${i + 1} | ${p.nome}${p.descricao ? " – " + p.descricao : ""}`).join("\n");
 
-  return `${quem} da ${cfg.nome_completo} no WhatsApp. Nunca finja ser uma pessoa: se perguntarem, diga que é um assistente virtual e que a equipe pode assumir quando precisar. Atende clientes em português do Brasil, com simpatia e frases curtas, como uma pessoa da barbearia escreveria no WhatsApp. Pode usar *negrito* do WhatsApp com moderação. Não use listas longas nem markdown de títulos. Uma ou duas mensagens curtas por vez.
+  return `${quem} da ${cfg.nome_completo} no WhatsApp. Nunca finja ser uma pessoa: se perguntarem, diga que é um assistente virtual e que a equipe pode assumir quando precisar. Atende clientes em português do Brasil, com simpatia e frases curtas, como uma pessoa da barbearia escreveria no WhatsApp. Pode usar *negrito* do WhatsApp com moderação. Não use markdown de títulos.
+
+FORMATO DAS MENSAGENS (siga sempre):
+- Cada frase em uma linha própria: depois de ponto final, exclamação ou interrogação, comece uma linha nova.
+- Sempre que o cliente tiver que escolher (serviço, dia, horário, profissional, sim ou não), numere as opções, uma por linha, assim:
+1 - Corte masculino – R$ 45,00
+2 - Corte + barba – R$ 70,00
+Depois da lista, diga em uma linha: "Responda com o número da opção."
+- Serviços e cortes: um por linha, com preço e, se ajudar, a duração. Nunca junte vários serviços na mesma linha.
+- No máximo 6 opções por lista; se houver mais, mostre as mais procuradas e ofereça "ver mais".
+- Se o cliente responder só com um número, ele escolheu a opção com esse número da sua última mensagem. Se o número não existir na lista, peça para escolher de novo.
 
 AGORA: ${ag.data} (${DIAS[ag.dow]}), ${ag.hora}, horário de São Paulo.
 Próximos dias: ${prox}.
@@ -282,6 +292,13 @@ async function chamarClaude(chave: string, sistema: string, mensagens: any[]) {
   });
   if (!r.ok) throw new Error(`Claude API ${r.status}: ${(await r.text()).slice(0, 300)}`);
   return await r.json();
+}
+
+/** Uma frase por linha: quebra depois de . ! ? (não mexe em "1 - ", números, preços nem links). */
+function quebrarFrases(t: string) {
+  return t.split("\n").map((linha) =>
+    linha.replace(/([^\d\s.][.!?]+)[ \t]+(?=[^\s\d(])/g, "$1\n")
+  ).join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /** Processa uma mensagem do cliente e devolve a resposta do agente (ou null se a equipe assumiu). */
@@ -371,6 +388,7 @@ export async function atender(admin: SupabaseClient, canal: "simulador" | "whats
     if (i === MAX_RODADAS - 1) resposta = textos || "Desculpe, não consegui concluir agora. Vou chamar alguém da equipe.";
   }
   if (!resposta) resposta = "Desculpe, não entendi. Pode repetir?";
+  resposta = quebrarFrases(resposta);
 
   const { data: salva } = await admin.from("mensagens").insert({
     conversa_id: conv.id, papel: "agente", texto: resposta.slice(0, 4000),
